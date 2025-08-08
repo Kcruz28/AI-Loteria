@@ -1,0 +1,13 @@
+torch
+torchvision
+matplotlib
+tqdm
+pytesseract
+Pillow
+numpy
+tokenizers
+pandas
+opencv-python
+requests
+ultralytics
+gradio

@@ -43,7 +43,7 @@ def coordinate_objects(results, frame, shared_classes=None):
                 detected_classes.add(cls)
 
                 if cls not in tablas:
-                    color = (0, 0, 255)  # Red
+                    color = (0, 165, 255)  # Orange
                     if class_color.get(cls) == True:
                         color = (0, 255, 0)  # Green
                     elif shared_classes and cls in shared_classes:
@@ -76,7 +76,7 @@ def coordinate_objects(results, frame, shared_classes=None):
     return detected_classes
 
 
-def testing_middle_dot():
+def testing_middle_dot(image_path=None):
     device = torch.device(
         "cuda"
         if torch.cuda.is_available()
@@ -88,6 +88,24 @@ def testing_middle_dot():
 
     model = YOLO("best.pt")  # for .pt
     model.to(device)  # for .pt
+
+    if image_path:
+        frame = cv2.imread(image_path)
+        if frame is None:
+            print(f"Error: could not read image at {image_path}")
+            return
+
+        confidence = 0.70
+        results = model(frame, conf=confidence)
+        annotated_frame = results[0].plot()
+
+        detected_classes = coordinate_objects(results, annotated_frame)
+
+        cv2.imshow("Test Image", annotated_frame)
+        print("Press any key to quit.")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+        return
 
     cap0 = cv2.VideoCapture(0)
     cap1 = cv2.VideoCapture(1)
@@ -207,4 +225,19 @@ def testing_middle_dot():
 
 
 if __name__ == "__main__":
-    testing_middle_dot()
+    # Create a directory for test images if it doesn't exist
+    if not os.path.exists("test_images"):
+        os.makedirs("test_images")
+
+    # Define the path to the test image
+    test_image_path = "test_images/loteria.png"
+
+    # Check if the test image exists
+    if os.path.exists(test_image_path):
+        testing_middle_dot(image_path=test_image_path)
+    else:
+        print(
+            f"Test image not found at {test_image_path}. Please save the image in the 'test_images' directory."
+        )
+        print("Falling back to camera feed.")
+        testing_middle_dot()

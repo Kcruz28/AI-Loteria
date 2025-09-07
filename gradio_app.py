@@ -238,7 +238,10 @@ class LoteriaDetector:
 detector = LoteriaDetector()
 
 #  Gradio interface
-with gr.Blocks(title="🎲 AI Loteria Game", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(
+    title="🎲 AI Loteria Game",
+    theme=gr.themes.Soft(primary_hue=gr.themes.colors.orange),
+) as demo:
     gr.Markdown(
         """
     # 🎲 AI Loteria Card Detection Game
@@ -258,6 +261,16 @@ with gr.Blocks(title="🎲 AI Loteria Game", theme=gr.themes.Soft()) as demo:
             with gr.Row():
                 with gr.Column():
                     single_input = gr.Image(label="Upload Image", type="pil")
+                    gr.Examples(
+                        examples=[
+                            "test_images/test1.webp",
+                            "test_images/test2.webp",
+                            "test_images/test3.webp",
+                            "test_images/test4.webp",
+                        ],
+                        inputs=single_input,
+                        label="Example Images",
+                    )
                     single_confidence = gr.Slider(
                         minimum=0.1,
                         maximum=1.0,
@@ -277,6 +290,14 @@ with gr.Blocks(title="🎲 AI Loteria Game", theme=gr.themes.Soft()) as demo:
                 with gr.Column():
                     dual_input1 = gr.Image(label="Camera 1 Image", type="pil")
                     dual_input2 = gr.Image(label="Camera 2 Image", type="pil")
+                    gr.Examples(
+                        examples=[
+                            ["test_images/test1.webp", "test_images/test2.webp"],
+                            ["test_images/test3.webp", "test_images/test4.webp"],
+                        ],
+                        inputs=[dual_input1, dual_input2],
+                        label="Example Image Pairs",
+                    )
                     dual_confidence = gr.Slider(
                         minimum=0.1,
                         maximum=1.0,
@@ -323,8 +344,8 @@ if __name__ == "__main__":
     print("📱 Open the URL below in your browser to play!")
 
     demo.launch(
-        server_name="0.0.0.0",  
+        server_name="0.0.0.0",
         server_port=7860,
-        share=True, 
+        share=True,
         show_error=True,
     )

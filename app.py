@@ -6,6 +6,13 @@ import torch
 import threading
 import loteria_bot_controller
 
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Set this to True if you only have 1 camera connected and want to test the CNC movement.
+# When True, it will drop a bean on ANY card it detects immediately.
+TEST_MODE_SINGLE_CAMERA = True
+
 
 class_color = {}
 camera_class_ids = {}
@@ -47,9 +54,9 @@ def coordinate_objects(results, frame, shared_classes=None):
                     color = (0, 0, 255)  # Red
                     if class_color.get(cls) == True:
                         color = (0, 255, 0)  # Green
-                    elif shared_classes and cls in shared_classes:
+                    elif (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA:
                         color = (0, 255, 0)  # Green
-                        class_color[cls] = True  # remenber it was seen by both cameras
+                        class_color[cls] = True  # remenber it was seen by both cameras (or we are testing)
                         green_cards.add(cls)
                         
                         # Trigger CNC to drop bean at the midpoint of the detected square

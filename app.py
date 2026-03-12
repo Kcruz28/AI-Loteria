@@ -4,6 +4,7 @@ import time
 import os
 import torch
 import threading
+import loteria_bot_controller
 
 
 class_color = {}
@@ -50,6 +51,10 @@ def coordinate_objects(results, frame, shared_classes=None):
                         color = (0, 255, 0)  # Green
                         class_color[cls] = True  # remenber it was seen by both cameras
                         green_cards.add(cls)
+                        
+                        # Trigger CNC to drop bean at the midpoint of the detected square
+                        # We run this in a separate thread so it doesn't freeze the camera feed
+                        threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_mid, y_mid), daemon=True).start()
 
                 cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
                 cv2.putText(

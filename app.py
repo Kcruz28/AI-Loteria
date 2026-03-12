@@ -127,7 +127,7 @@ def testing_middle_dot():
 
             try:
                 confidence = 0.70
-                results = model(frame, conf=confidence)
+                results = model(frame, conf=confidence, imgsz=320)
                 annotated_frame = results[0].plot()
 
                 # grab other camera's classes

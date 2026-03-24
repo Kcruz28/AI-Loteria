@@ -235,11 +235,12 @@ def drop_bean(pixel_x, pixel_y):
          print("ERROR: Safety limit reached. Coordinate is out of bounds.")
          return
 
-    # 3. Move the CNC
+    # 3. Move the CNC (Sequentially)
     print("\n=======================================================")
-    print(f"[CNC] 🚗 MOVING MOTORS TO X-Axis: {target_x} mm, Y-Axis: {target_y} mm...")
+    print(f"[CNC] 🚗 MOVING SEQUENTIALLY TO X-Axis: {target_x} mm, then Y-Axis: {target_y} mm...")
     print("=======================================================")
-    send_gcode(f"G0 X{target_x} Y{target_y}")
+    send_gcode(f"G0 X{target_x}") # Move X axis first
+    send_gcode(f"G0 Y{target_y}") # Then move Y axis
     
     # 4. Activate Servo (Using M3 Spindle command in GRBL)
     print(f"[CNC] 👇 DROPPING BEAN AT ({target_x}, {target_y})...")
@@ -249,7 +250,8 @@ def drop_bean(pixel_x, pixel_y):
     
     # 5. MOVE TO PARK (Out of camera view)
     print("Parking gantry...")
-    send_gcode("G0 X-50 Y-50") 
+    send_gcode("G0 Y-50") # Park Y axis first
+    send_gcode("G0 X-50") # Park X axis second 
 
 
 if __name__ == "__main__":

@@ -177,6 +177,14 @@ def send_gcode(cmd):
                     print("-> Fix: Press the physical 'RESET' button on the board or unplug the USB.")
                     print("!"*60 + "\n")
                     break
+    except KeyboardInterrupt:
+        print("\n\n[CNC] 🛑 EMERGENCY STOP DETECTED! (Ctrl+C pressed) 🛑")
+        grbl.write(b'!') # GRBL Feed Hold (Stop instantly)
+        time.sleep(0.1)
+        grbl.write(b'\x18') # GRBL Soft Reset (Clear memory)
+        print("[CNC] 🛑 Sent INSTANT HALT command to motors! Shutting down script...\n")
+        import sys
+        sys.exit(1)
     except Exception as e:
         print(f"[CNC] !!! SERIAL RUNTIME ERROR: {e}")
 
@@ -228,9 +236,13 @@ def drop_bean(pixel_x, pixel_y):
          return
 
     # 3. Move the CNC
+    print("\n=======================================================")
+    print(f"[CNC] 🚗 MOVING MOTORS TO X-Axis: {target_x} mm, Y-Axis: {target_y} mm...")
+    print("=======================================================")
     send_gcode(f"G0 X{target_x} Y{target_y}")
     
     # 4. Activate Servo (Using M3 Spindle command in GRBL)
+    print(f"[CNC] 👇 DROPPING BEAN AT ({target_x}, {target_y})...")
     send_gcode("M3 S90") # Servo Drop
     time.sleep(0.5)
     send_gcode("M3 S0")  # Servo Reset
@@ -245,6 +257,7 @@ if __name__ == "__main__":
     print("Loteria CNC Bot Controller")
     print("1. Run Calibration")
     print("2. Test Drop Bean")
+    print("3. Manual Motor Jogging (Test Individual Axis)")
     choice = input("Select an option: ")
     
     if choice == "1":
@@ -259,3 +272,33 @@ if __name__ == "__main__":
             drop_bean(x, y)
         except ValueError:
             print("Please enter valid numbers.")
+    elif choice == "3":
+        print("-------------------------------------------")
+        print("MANUAL JOG MODE")
+        print("Nudge your motors safely by small measurements.")
+        print("Type an Axis and a Millimeter value (e.g., 'X 10' to go right, 'X -10' to go left)")
+        print("Type 'SERVO' to drop a bean.")
+        print("Type 'q' to quit.")
+        print("-------------------------------------------")
+        send_gcode("G91") # Set GRBL to RELATIVE positioning mode
+        while True:
+            cmd = input("Jog Command -> ").strip().upper()
+            if cmd == 'Q':
+                send_gcode("G90") # Restore GRBL back to Absolute Mode
+                break
+            elif cmd == 'SERVO':
+                send_gcode("M3 S90")
+                time.sleep(0.5)
+                send_gcode("M3 S0")
+            elif cmd:
+                try:
+                    parts = cmd.split()
+                    axis = parts[0]
+                    val = float(parts[1])
+                    if axis in ['X', 'Y', 'Z']:
+                        print(f"Moving {axis}-Axis by {val}mm...")
+                        send_gcode(f"G0 {axis}{val}")
+                    else:
+                        print("Please start with X or Y.")
+                except Exception:
+                    print("Invalid input! Try something like: X 10")

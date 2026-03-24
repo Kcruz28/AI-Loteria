@@ -4,24 +4,35 @@ import cv2
 import numpy as np
 import os
 import json
+import threading
+import serial.tools.list_ports
 
 # ==============================================================================
 # 1. SETUP & CONFIGURATION
 # ==============================================================================
 
 # Hardware connections
-# Usually /dev/ttyACM0 or /dev/ttyUSB0 on Raspberry Pi
-# Commented out for testing purposes if Arduino is not connected
-try:
-    grbl = serial.Serial('/dev/ttyUSB0', 115200, timeout=1)
-    # Wake up GRBL
-    grbl.write(b"\r\n\r\n")
-    time.sleep(2)
-    grbl.flushInput()
-    print("Connected to CNC Shield")
-except Exception as e:
-    print(f"Warning: Could not connect to GRBL: {e}")
-    grbl = None
+# Auto-detect the USB serial port for the GRBL Arduino
+def connect_grbl():
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        if 'USB' in port.device or 'ACM' in port.device or 'usbserial' in port.device or 'usbmodem' in port.device:
+            try:
+                print(f"[SETUP] Attempting to connect to GRBL on {port.device}...")
+                s = serial.Serial(port.device, 115200, timeout=1)
+                s.write(b"\r\n\r\n")
+                time.sleep(2)
+                s.flushInput()
+                print(f"[SETUP] -> Successfully connected to GRBL on {port.device}!")
+                return s
+            except Exception as e:
+                print(f"[SETUP] -> Failed to connect on {port.device}: {e}")
+    
+    print("[SETUP] -> No suitable GRBL device found. Will run in SIMULATED mode.")
+    return None
+
+grbl = connect_grbl()
+robot_lock = threading.Lock() # Ensures only one command accesses the robot at a time
 
 # Calibration file path
 CALIBRATION_FILE = "homography_matrix.json"
@@ -96,15 +107,25 @@ def send_gcode(cmd):
     Sends a G-code command to the GRBL controller via serial
     and waits for the 'ok' response.
     """
+    print(f"\n[CNC] --> Sending: {cmd}")
     if grbl is None:
-        print(f"[SIMULATED GCODE] {cmd}")
+        print(f"[CNC] <-- [SIMULATED SUCCESS, waiting for 'ok']")
+        time.sleep(0.5) # Fake movement delay
         return
         
-    grbl.write((cmd + '\n').encode())
-    while True:
-        line = grbl.readline().decode().strip()
-        if 'ok' in line.lower():
-            break
+    try:
+        grbl.write((cmd + '\n').encode())
+        while True:
+            line = grbl.readline().decode('utf-8').strip()
+            if line:
+                print(f"[CNC] <-- Received: {line}")
+            if 'ok' in line.lower():
+                break
+            if 'error' in line.lower():
+                print(f"[CNC] !!! ERROR from GRBL controller !!!")
+                break
+    except Exception as e:
+        print(f"[CNC] !!! SERIAL RUNTIME ERROR: {e}")
 
 
 def pixel_to_mm(pixel_x, pixel_y, transform_matrix):
@@ -129,9 +150,11 @@ def drop_bean(pixel_x, pixel_y):
     """
     Reads the calibration, calculates the exact mm, and drops the bean.
     """
-    matrix = load_calibration()
-    if matrix is None:
-        return
+    with robot_lock:
+        print(f"\n[{time.strftime('%H:%M:%S')}] *** INITIATING ROBOT DROP SEQUENCE ***")
+        matrix = load_calibration()
+        if matrix is None:
+            return
 
     # 1. Do the Math
     target_x, target_y = pixel_to_mm(pixel_x, pixel_y, matrix)

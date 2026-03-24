@@ -59,6 +59,11 @@ def coordinate_objects(results, frame, shared_classes=None):
                         class_color[cls] = True  # remenber it was seen by both cameras (or we are testing)
                         green_cards.add(cls)
                         
+                        print(f"\n=======================================================")
+                        print(f"🟢 BINGO! Class {cls} matched at pixel coords ({x_mid}, {y_mid})!")
+                        print(f"Triggering robot to drop bean...")
+                        print(f"=======================================================\n")
+                        
                         # Trigger CNC to drop bean at the midpoint of the detected square
                         # We run this in a separate thread so it doesn't freeze the camera feed
                         threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_mid, y_mid), daemon=True).start()
@@ -74,9 +79,9 @@ def coordinate_objects(results, frame, shared_classes=None):
                     2,
                 )
 
-                print(
-                    f"Camera sees class {cls}, confidence {conf:.2f}, midpoint ({x_mid},{y_mid})"
-                )
+                # To prevent console spam, we won't print every single frame.
+                # Uncomment this if you need to debug raw vision tracking:
+                # print(f"Camera sees class {cls}, confidence {conf:.2f}, midpoint ({x_mid},{y_mid})")
 
     if green_cards == total_cards:
         cv2.putText(

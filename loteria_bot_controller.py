@@ -60,29 +60,71 @@ def calibrate_homography():
         [0, 240]        # Bottom-Left corner
     ], dtype=np.float32)
 
-    # 2. Pixel Coordinates (Where the camera sees these points)
-    # Use your YOLO camera feed or a test script to find these (X, Y) pixels.
-    print("\nLook at your camera feed and input the (X, Y) pixel coordinates for each corner:")
+    # 2. Pixel Coordinates (Camera click calibration)
+    print("\nOpening camera for calibration...")
+    cam_choice = input("Press ENTER to use Camera 0, or type '1' for Camera 1: ")
+    cam_id = 1 if cam_choice.strip() == '1' else 0
+    cap = cv2.VideoCapture(cam_id)
     
-    pixel_pts = []
-    corners = ["Top-Left (0,0)", "Top-Right", "Bottom-Right", "Bottom-Left"]
-    
-    for corner in corners:
-        x = float(input(f"Enter X pixel for {corner}: "))
-        y = float(input(f"Enter Y pixel for {corner}: "))
-        pixel_pts.append([x, y])
+    if not cap.isOpened():
+        print("❌ Could not open camera. Check connection.")
+        return None
         
-    pixel_pts = np.array(pixel_pts, dtype=np.float32)
+    pixel_pts = []
+    def click_event(event, x, y, flags, params):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if len(pixel_pts) < 4:
+                pixel_pts.append([x, y])
+                print(f"🎯 Captured point {len(pixel_pts)}/4 at ({x}, {y})")
 
-    # 3. Calculate Transformation Matrix
-    # This magic math figures out how to translate any pixel to any mm
-    matrix, _ = cv2.findHomography(pixel_pts, physical_pts)
+    win_name = 'Calibration - Click the 4 corners'
+    cv2.namedWindow(win_name)
+    cv2.setMouseCallback(win_name, click_event)
+    
+    print("\n===== INSTRUCTIONS =====")
+    print("Click the 4 corners of your game board on the video feed.")
+    print("Do it in this EXACT order:")
+    print("  1. Top-Left corner (0,0)")
+    print("  2. Top-Right corner")
+    print("  3. Bottom-Right corner")
+    print("  4. Bottom-Left corner")
+    print("Press 'q' to cancel.")
+    print("========================\n")
 
-    # 4. Save to file so we don't have to calibrate every time
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+            
+        for idx, pt in enumerate(pixel_pts):
+            cv2.circle(frame, (int(pt[0]), int(pt[1])), 6, (0, 0, 255), -1)
+            cv2.putText(frame, str(idx + 1), (int(pt[0]) + 10, int(pt[1]) - 10), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                        
+        cv2.imshow(win_name, frame)
+        
+        if len(pixel_pts) == 4:
+            print("\nAll 4 points captured, calculating matrix...")
+            cv2.waitKey(1000)
+            break
+            
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+            
+    cap.release()
+    cv2.destroyAllWindows()
+    
+    if len(pixel_pts) != 4:
+        print("❌ Calibration cancelled.")
+        return None
+
+    pixel_pts_arr = np.array(pixel_pts, dtype=np.float32)
+    matrix, _ = cv2.findHomography(pixel_pts_arr, physical_pts)
+
     with open(CALIBRATION_FILE, 'w') as f:
         json.dump(matrix.tolist(), f)
     
-    print("\nCalibration successful! Matrix saved to " + CALIBRATION_FILE)
+    print(f"✅ Calibration successful! Saved to {CALIBRATION_FILE}")
     return matrix
 
 
@@ -115,15 +157,26 @@ def send_gcode(cmd):
         
     try:
         grbl.write((cmd + '\n').encode())
+        timeout_counter = 0
         while True:
             line = grbl.readline().decode('utf-8').strip()
             if line:
                 print(f"[CNC] <-- Received: {line}")
-            if 'ok' in line.lower():
-                break
-            if 'error' in line.lower():
-                print(f"[CNC] !!! ERROR from GRBL controller !!!")
-                break
+                timeout_counter = 0 # reset on valid data
+                if 'ok' in line.lower():
+                    break
+                if 'error' in line.lower():
+                    print(f"[CNC] !!! GRBL EXCEPTION CAUGHT !!!")
+                    break
+            else:
+                timeout_counter += 1
+                if timeout_counter >= 3: # 3 empty reads = 3 seconds hung/frozen
+                    print("\n" + "!"*60)
+                    print("[CNC] ⚠️ CRITICAL: Arduino stopped responding to serial commands!")
+                    print("-> Why? The Arduino received a command but never said 'ok'.")
+                    print("-> Fix: Press the physical 'RESET' button on the board or unplug the USB.")
+                    print("!"*60 + "\n")
+                    break
     except Exception as e:
         print(f"[CNC] !!! SERIAL RUNTIME ERROR: {e}")
 
@@ -197,6 +250,12 @@ if __name__ == "__main__":
     if choice == "1":
         calibrate_homography()
     elif choice == "2":
-        x = float(input("Enter test X pixel: "))
-        y = float(input("Enter test Y pixel: "))
-        drop_bean(x, y)
+        print("-------------------------------------------")
+        print("Test a bean drop manually WITHOUT the YOLO active.")
+        print("You type exactly which camera pixel (X, Y) to navigate to.")
+        try:
+            x = float(input("Enter test X pixel (e.g. 300): "))
+            y = float(input("Enter test Y pixel (e.g. 200): "))
+            drop_bean(x, y)
+        except ValueError:
+            print("Please enter valid numbers.")

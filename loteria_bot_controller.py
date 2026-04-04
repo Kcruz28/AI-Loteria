@@ -282,25 +282,47 @@ if __name__ == "__main__":
         print("Type 'SERVO' to drop a bean.")
         print("Type 'q' to quit.")
         print("-------------------------------------------")
-        send_gcode("G91") # Set GRBL to RELATIVE positioning mode
+        
+        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Setting GRBL to RELATIVE positioning mode (G91)...")
+        try:
+            send_gcode("G91") # Set GRBL to RELATIVE positioning mode
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to send G91: {e}")
+            
         while True:
             cmd = input("Jog Command -> ").strip().upper()
             if cmd == 'Q':
-                send_gcode("G90") # Restore GRBL back to Absolute Mode
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Quitting manual jog mode. Restoring Absolute Mode (G90)...")
+                try:
+                    send_gcode("G90") # Restore GRBL back to Absolute Mode
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to send G90: {e}")
                 break
             elif cmd == 'SERVO':
-                send_gcode("M3 S90")
-                time.sleep(0.5)
-                send_gcode("M3 S0")
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Initiating SERVO drop sequence...")
+                try:
+                    send_gcode("M3 S90")
+                    time.sleep(0.5)
+                    send_gcode("M3 S0")
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] SERVO sequence complete.")
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Servo drop failed: {e}")
             elif cmd:
                 try:
                     parts = cmd.split()
                     axis = parts[0]
                     val = float(parts[1])
                     if axis in ['X', 'Y', 'Z']:
-                        print(f"Moving {axis}-Axis by {val}mm...")
-                        send_gcode(f"G0 {axis}{val}")
+                        gcode_cmd = f"G0 {axis}{val}"
+                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Preparing to move {axis}-Axis by {val}mm...")
+                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Sending command: {gcode_cmd}")
+                        try:
+                            send_gcode(gcode_cmd)
+                            print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Post-move check complete for {gcode_cmd}.")
+                        except Exception as e:
+                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to execute move command {gcode_cmd}: {e}")
                     else:
-                        print("Please start with X or Y.")
-                except Exception:
+                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Unrecognized axis '{axis}'. Please start with X, Y, or Z.")
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Exception parsing input '{cmd}': {e}")
                     print("Invalid input! Try something like: X 10")

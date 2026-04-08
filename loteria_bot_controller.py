@@ -11,6 +11,11 @@ import serial.tools.list_ports
 # 1. SETUP & CONFIGURATION
 # ==============================================================================
 
+# Movement Speeds (mm/min). Using G1 instead of G0 allows speed control.
+# Y is lighter, so we lower the feed rate to prevent violent jerking.
+SPEED_X = 2000 
+SPEED_Y = 800
+
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino
 def connect_grbl():
@@ -229,8 +234,8 @@ def drop_bean(pixel_x, pixel_y):
     
     # 2. Add safety limits (prevent crashing the CNC)
     # Adjust these to your gantry's MAX physical size
-    MAX_X = 200 
-    MAX_Y = 300
+    MAX_X = 300 
+    MAX_Y = 200
     if target_x < 0 or target_x > MAX_X or target_y < 0 or target_y > MAX_Y:
          print("ERROR: Safety limit reached. Coordinate is out of bounds.")
          return
@@ -239,8 +244,8 @@ def drop_bean(pixel_x, pixel_y):
     print("\n=======================================================")
     print(f"[CNC] 🚗 MOVING SEQUENTIALLY TO X-Axis: {target_x} mm, then Y-Axis: {target_y} mm...")
     print("=======================================================")
-    send_gcode(f"G0 X{target_x}") # Move X axis first
-    send_gcode(f"G0 Y{target_y}") # Then move Y axis
+    send_gcode(f"G1 X{target_x} F{SPEED_X}") # Move X axis first
+    send_gcode(f"G1 Y{target_y} F{SPEED_Y}") # Then move Y axis slower
     
     # 4. Activate Servo (Using M3 Spindle command in GRBL)
     print(f"[CNC] 👇 DROPPING BEAN AT ({target_x}, {target_y})...")
@@ -250,8 +255,8 @@ def drop_bean(pixel_x, pixel_y):
     
     # 5. MOVE TO PARK (Out of camera view)
     print("Parking gantry...")
-    send_gcode("G0 Y-50") # Park Y axis first
-    send_gcode("G0 X-50") # Park X axis second 
+    send_gcode(f"G1 Y-50 F{SPEED_Y}") # Park Y axis first
+    send_gcode(f"G1 X-50 F{SPEED_X}") # Park X axis second 
 
 
 if __name__ == "__main__":
@@ -313,7 +318,8 @@ if __name__ == "__main__":
                     axis = parts[0]
                     val = float(parts[1])
                     if axis in ['X', 'Y', 'Z']:
-                        gcode_cmd = f"G0 {axis}{val}"
+                        feed_rate = SPEED_Y if axis == 'Y' else SPEED_X
+                        gcode_cmd = f"G1 {axis}{val} F{feed_rate}"
                         print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Preparing to move {axis}-Axis by {val}mm...")
                         print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Sending command: {gcode_cmd}")
                         try:

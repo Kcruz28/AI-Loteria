@@ -14,7 +14,7 @@ import serial.tools.list_ports
 # Movement Speeds (mm/min). Using G1 instead of G0 allows speed control.
 # Y is lighter, so we lower the feed rate to prevent violent jerking.
 SPEED_X = 2000 
-SPEED_Y = 800
+SPEED_Y = 300
 
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino

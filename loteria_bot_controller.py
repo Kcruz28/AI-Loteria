@@ -16,6 +16,10 @@ import serial.tools.list_ports
 SPEED_X = 2000 
 SPEED_Y = 300
 
+# Safe Origin / Parking Coordinates
+ORIGIN_X = 0   # fully left
+ORIGIN_Y = 5   # slightly down from 0 to prevent hitting the top frame hard
+
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino
 def connect_grbl():
@@ -261,10 +265,10 @@ def drop_bean(pixel_x, pixel_y):
     time.sleep(0.5)
     send_gcode("M3 S0")  # Servo Reset
     
-    # 5. MOVE TO PARK (Out of camera view)
-    print("Parking gantry...")
-    send_gcode(f"G1 Y-50 F{SPEED_Y}") # Park Y axis first
-    send_gcode(f"G1 X-50 F{SPEED_X}") # Park X axis second 
+    # 5. MOVE TO PARK (Origin)
+    print(f"Parking gantry at safe origin (X:{ORIGIN_X}, Y:{ORIGIN_Y})...")
+    send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}") # Park Y axis first
+    send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}") # Park X axis second 
 
 
 if __name__ == "__main__":
@@ -295,6 +299,7 @@ if __name__ == "__main__":
         print("  -> X Positive (+): Moves LEFT (towards the X motor)")
         print("  -> Y Positive (+): Moves DOWN (away from the Y motor)")
         print("Type 'SERVO' to drop a bean.")
+        print("Type 'ORIGIN' to return the gantry to the safe parking origin.")
         print("Type 'q' to quit.")
         print("-------------------------------------------")
         
@@ -322,6 +327,16 @@ if __name__ == "__main__":
                     print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] SERVO sequence complete.")
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Servo drop failed: {e}")
+            elif cmd == 'ORIGIN':
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Testing parking to safe origin (X:{ORIGIN_X}, Y:{ORIGIN_Y})...")
+                try:
+                    send_gcode("G90") # Switch temporarily to Absolute Mode
+                    send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}") # Move Y safely
+                    send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}") # Move X safely
+                    send_gcode("G91") # Switch back to Relative positioning for jogging
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Origin sequence complete.")
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Origin sequence failed: {e}")
             elif cmd:
                 try:
                     parts = cmd.split()

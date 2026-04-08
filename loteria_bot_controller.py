@@ -300,6 +300,7 @@ if __name__ == "__main__":
         print("  -> Y Positive (+): Moves DOWN (away from the Y motor)")
         print("Type 'SERVO' to drop a bean.")
         print("Type 'ORIGIN' to return the gantry to the safe parking origin.")
+        print("Type 'ZERO' to set the current position as the new absolute (0,0) origin.")
         print("Type 'q' to quit.")
         print("-------------------------------------------")
         
@@ -337,6 +338,13 @@ if __name__ == "__main__":
                     print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Origin sequence complete.")
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Origin sequence failed: {e}")
+            elif cmd == 'ZERO':
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Zeroing machine coordinates (G92 X0 Y0 Z0)...")
+                try:
+                    send_gcode("G92 X0 Y0 Z0")
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Current position successfully set as the absolute (0,0) origin.")
+                except Exception as e:
+                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to zero coordinates: {e}")
             elif cmd:
                 try:
                     parts = cmd.split()

@@ -12,13 +12,13 @@ import serial.tools.list_ports
 # ==============================================================================
 
 # Movement Speeds (mm/min). Using G1 instead of G0 allows speed control.
-# Y is lighter, so we lower the feed rate to prevent violent jerking.
-SPEED_X = 2000 
+# X is heavy, so we limit the feed rate to prevent motor stutter/skipping steps.
+SPEED_X = 500 
 SPEED_Y = 300
 
 # Safe Origin / Parking Coordinates
 ORIGIN_X = 0   # fully left
-ORIGIN_Y = 5   # slightly down from 0 to prevent hitting the top frame hard
+ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
 
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino
@@ -32,6 +32,11 @@ def connect_grbl():
                 s.write(b"\r\n\r\n")
                 time.sleep(2)
                 s.flushInput()
+                
+                # ENFORCE CRITICAL STARTUP CONFIG
+                s.write(b"G21\n") # Force Millimeters (Prevents inch-scaling bugs)
+                time.sleep(0.1)
+                
                 print(f"[SETUP] -> Successfully connected to GRBL on {port.device}!")
                 return s
             except Exception as e:
@@ -256,6 +261,7 @@ def drop_bean(pixel_x, pixel_y):
     print("\n=======================================================")
     print(f"[CNC] 🚗 MOVING SEQUENTIALLY TO X-Axis: {target_x} mm, then Y-Axis: {target_y} mm...")
     print("=======================================================")
+    send_gcode("G90") # Ensure Absolute Mode before executing coordinates
     send_gcode(f"G1 X{target_x} F{SPEED_X}") # Move X axis first
     send_gcode(f"G1 Y{target_y} F{SPEED_Y}") # Then move Y axis slower
     
@@ -267,6 +273,7 @@ def drop_bean(pixel_x, pixel_y):
     
     # 5. MOVE TO PARK (Origin)
     print(f"Parking gantry at safe origin (X:{ORIGIN_X}, Y:{ORIGIN_Y})...")
+    send_gcode("G90") # Ensure Absolute Mode for parking
     send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}") # Park Y axis first
     send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}") # Park X axis second 
 
@@ -301,6 +308,9 @@ if __name__ == "__main__":
         print("Type 'SERVO' to drop a bean.")
         print("Type 'ORIGIN' to return the gantry to the safe parking origin.")
         print("Type 'ZERO' to set the current position as the new absolute (0,0) origin.")
+        print("Type 'POS' to print the current physical coordinates of the machine.")
+        print("Type 'SETTINGS' to see current GRBL hardware config (steps/mm, etc).")
+        print("To change a setting, type it directly (e.g., '$100=80').")
         print("Type 'q' to quit.")
         print("-------------------------------------------")
         
@@ -339,12 +349,46 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Origin sequence failed: {e}")
             elif cmd == 'ZERO':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Zeroing machine coordinates (G92 X0 Y0 Z0)...")
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Zeroing machine coordinates (G10 L20 P1 X0 Y0 Z0)...")
                 try:
-                    send_gcode("G92 X0 Y0 Z0")
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Current position successfully set as the absolute (0,0) origin.")
+                    send_gcode("G10 L20 P1 X0 Y0 Z0")
+                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Current position successfully saved to EEPROM as the absolute (0,0) origin.")
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to zero coordinates: {e}")
+            elif cmd == 'POS':
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Requesting machine position...")
+                if grbl is None:
+                    print("--> SIMULATED: At X:0.0 Y:0.0")
+                else:
+                    try:
+                        grbl.write(b"?")
+                        time.sleep(0.1)
+                        while grbl.in_waiting > 0:
+                            line = grbl.readline().decode('utf-8').strip()
+                            if line:
+                                print(f"[{time.strftime('%H:%M:%S')}] [POSITION] {line}")
+                    except Exception as e:
+                        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to get position: {e}")
+            elif cmd == 'SETTINGS':
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Requesting GRBL settings ($$)...")
+                if grbl is None:
+                    print("--> SIMULATED: $100=250.000, $101=250.000, etc.")
+                else:
+                    try:
+                        grbl.write(b"$$\n")
+                        time.sleep(0.5)
+                        while grbl.in_waiting > 0:
+                            line = grbl.readline().decode('utf-8').strip()
+                            if line:
+                                print(f"[GRBL CONFIG] {line}")
+                    except Exception as e:
+                        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to get settings: {e}")
+            elif cmd.startswith('$'):
+                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Sending RAW config command: {cmd}")
+                if grbl:
+                    send_gcode(cmd)
+                else:
+                    print("--> SIMULATED: Config command accepted.")
             elif cmd:
                 try:
                     parts = cmd.split()

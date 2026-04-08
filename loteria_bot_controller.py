@@ -233,11 +233,19 @@ def drop_bean(pixel_x, pixel_y):
     print(f"Transformed to Physical Board: X:{target_x}mm, Y:{target_y}mm")
     
     # 2. Add safety limits (prevent crashing the CNC)
-    # Adjust these to your gantry's MAX physical size
-    MAX_X = 300 
-    MAX_Y = 200
+    # Accounting for the physical size of the carriage on each rail
+    # so the motor doesn't crash into the end.
+    X_RAIL_LENGTH = 300
+    X_CARRIAGE_WIDTH = 70
+    MAX_X = X_RAIL_LENGTH - X_CARRIAGE_WIDTH  # ~230 mm true usable travel
+    
+    Y_RAIL_LENGTH = 200
+    Y_CARRIAGE_WIDTH = 107
+    MAX_Y = Y_RAIL_LENGTH - Y_CARRIAGE_WIDTH  # ~93 mm true usable travel
+    
     if target_x < 0 or target_x > MAX_X or target_y < 0 or target_y > MAX_Y:
-         print("ERROR: Safety limit reached. Coordinate is out of bounds.")
+         print(f"ERROR: Safety limit reached. Coordinate ({target_x}, {target_y}) is out of bounds.")
+         print(f"-> Allowed ranges: X (0 to {MAX_X}), Y (0 to {MAX_Y})")
          return
 
     # 3. Move the CNC (Sequentially)
@@ -283,7 +291,9 @@ if __name__ == "__main__":
         print("-------------------------------------------")
         print("MANUAL JOG MODE")
         print("Nudge your motors safely by small measurements.")
-        print("Type an Axis and a Millimeter value (e.g., 'X 10' to go right, 'X -10' to go left)")
+        print("Type an Axis and a Millimeter value (e.g., 'X 10', 'Y -5')")
+        print("  -> X Positive (+): Moves LEFT (towards the X motor)")
+        print("  -> Y Positive (+): Moves DOWN (away from the Y motor)")
         print("Type 'SERVO' to drop a bean.")
         print("Type 'q' to quit.")
         print("-------------------------------------------")

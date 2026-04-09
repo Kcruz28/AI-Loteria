@@ -23,7 +23,7 @@ ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
 # Invert Axes Configuration (Change 1 to -1 to reverse the physical movement polarity)
 # If positive X moves the motor LEFT (wrong way), setting MULTIPLIER_X to -1 sends negative coordinates to fix it!
 MULTIPLIER_X = 1
-MULTIPLIER_Y = 1
+MULTIPLIER_Y = -1
 
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino

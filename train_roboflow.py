@@ -191,7 +191,7 @@ def train_yolov26_from_roboflow(
             exist_ok=False,
             verbose=False,
             plots=False,  # Reduce overhead and potential logging
-            multi_scale=multi_scale,
+            multi_scale=0.5 if multi_scale else 0.0, # Pass float (0.5 means +/- 50%) instead of True to prevent size dropping to 0
             rect=False,   # Multi-scale doesn't work well with rectangular training
             mosaic=1.0,   # Ensure mosaic is on for multi-scale robustness
         )

@@ -12,7 +12,9 @@ import os
 import shutil
 from datetime import datetime
 from pathlib import Path
+import logging
 
+from tqdm import tqdm
 from dotenv import load_dotenv
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER
@@ -96,7 +98,7 @@ def train_yolov26_from_roboflow(
     project: str | None = None,
     version: int = 1,
     model: str = "yolov8n.pt",
-    epochs: int = 100,
+    epochs: int = 70,
     imgsz: int = 640,
     batch: int = 16,
     workers: int | None = 4,
@@ -104,6 +106,7 @@ def train_yolov26_from_roboflow(
     project_dir: str = "runs/detect",
     run_name: str = "loteria_yolo_26",
     save_path: str = "best_yolov26.pt",
+    multi_scale: bool = False,
 ):
     """Train YOLO on a Roboflow dataset.
 
@@ -156,16 +159,25 @@ def train_yolov26_from_roboflow(
     model_obj = _load_yolo_model(model)
     os.environ["YOLO_VERBOSE"] = "False"
 
-    original_logger_info = LOGGER.info
+    # Create a clean progress bar for epochs
+    pbar = tqdm(total=epochs, desc="Training YOLO", unit="epoch", leave=True)
 
-    def filtered_logger_info(message, *args, **kwargs):
-        if isinstance(message, str) and "GPU_mem" in message and "Instances" in message:
-            return
-        if isinstance(message, str) and any(x in str(message) for x in ["box_loss", "cls_loss", "%" , "━", "─"]):
-            return
-        return original_logger_info(message, *args, **kwargs)
+    def on_train_epoch_end(trainer):
+        pbar.update(1)
+        # Extract metrics to show in progress bar
+        try:
+            metrics = {k.split("/")[-1]: f"{v:.4f}" for k, v in trainer.metrics.items() if "loss" in k or "MAP" in k}
+            pbar.set_postfix(metrics)
+        except Exception:
+            pass
 
-    LOGGER.info = filtered_logger_info
+    # Add callback to update our single progress bar
+    model_obj.add_callback("on_train_epoch_end", on_train_epoch_end)
+
+    # Temporarily silence the logger to avoid spamming the terminal
+    original_log_level = LOGGER.getEffectiveLevel()
+    LOGGER.setLevel(logging.WARNING)
+
     try:
         train_result = model_obj.train(
             data=str(dataset_path),
@@ -178,9 +190,13 @@ def train_yolov26_from_roboflow(
             name=run_name,
             exist_ok=False,
             verbose=False,
+            plots=False,  # Reduce overhead and potential logging
+            multi_scale=multi_scale,
         )
     finally:
-        LOGGER.info = original_logger_info
+        # Restore logger and close progress bar
+        LOGGER.setLevel(original_log_level)
+        pbar.close()
 
     best_weights = Path(project_dir) / run_name / "weights" / "best.pt"
     default_save_path = save_path == "best_yolov26.pt"
@@ -228,6 +244,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="best_yolov26.pt",
         help="Path to copy the trained best weights into",
     )
+    parser.add_argument(
+        "--multi-scale",
+        action="store_true",
+        help="Vary image size by +/- 50%% during training to improve robustness (takes longer).",
+    )
     return parser
 
 
@@ -248,6 +269,7 @@ def main() -> None:
         project_dir=args.project_dir,
         run_name=args.run_name,
         save_path=args.save_path,
+        multi_scale=args.multi_scale,
     )
 
 

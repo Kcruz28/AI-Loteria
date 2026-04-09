@@ -20,9 +20,10 @@ SPEED_Y = 100
 ORIGIN_X = 0   # fully left
 ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
 
-# Invert Axes Configuration (Change to False if it's mirroring incorrectly)
-INVERT_X_AXIS = True
-INVERT_Y_AXIS = True
+# Invert Axes Configuration (Change 1 to -1 to reverse the physical movement polarity)
+# If positive X moves the motor LEFT (wrong way), setting MULTIPLIER_X to -1 sends negative coordinates to fix it!
+MULTIPLIER_X = -1
+MULTIPLIER_Y = 1
 
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino
@@ -250,10 +251,10 @@ def drop_bean(pixel_x, pixel_y):
     # 1. Do the Math
     target_x, target_y = pixel_to_mm(pixel_x, pixel_y, matrix)
 
-    if getattr(globals(), "INVERT_X_AXIS", False):
-        target_x = 150 - target_x  # Flips horizontally across the 150mm board
-    if getattr(globals(), "INVERT_Y_AXIS", False):
-        target_y = 240 - target_y  # Flips vertically across the 240mm board
+    # Multiply coordinates depending on which way the CNC considers "positive"
+    # Usually X+ is LEFT and Y+ is UP on some CNCs.
+    target_x = target_x * getattr(globals(), "MULTIPLIER_X", -1)
+    target_y = target_y * getattr(globals(), "MULTIPLIER_Y", 1)
     
     # Round to 2 decimal places for GCODE
     target_x = round(target_x, 2)

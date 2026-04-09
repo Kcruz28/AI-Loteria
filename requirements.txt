@@ -11,3 +11,5 @@ opencv-python
 requests
 ultralytics
 gradio
+roboflow
+python-dotenv

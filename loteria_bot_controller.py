@@ -17,8 +17,8 @@ SPEED_X = 100
 SPEED_Y = 100
 
 # Safe Origin / Parking Coordinates
-ORIGIN_X = 0   # fully left
-ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
+ORIGIN_X = 0      # fully left
+ORIGIN_Y = -0.1   # slight offset to park UP without hitting the frame
 
 # Invert Axes Configuration (Change 1 to -1 to reverse the physical movement polarity)
 # If positive X moves the motor LEFT (wrong way), setting MULTIPLIER_X to -1 sends negative coordinates to fix it!

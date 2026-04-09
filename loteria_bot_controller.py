@@ -13,8 +13,8 @@ import serial.tools.list_ports
 
 # Movement Speeds (mm/min). Using G1 instead of G0 allows speed control.
 # X is heavy, so we limit the feed rate to prevent motor stutter/skipping steps.
-SPEED_X = 500 
-SPEED_Y = 300
+SPEED_X = 100
+SPEED_Y = 100
 
 # Safe Origin / Parking Coordinates
 ORIGIN_X = 0   # fully left

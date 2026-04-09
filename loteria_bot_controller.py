@@ -274,7 +274,8 @@ def drop_bean(pixel_x, pixel_y):
     if target_x < MIN_X or target_x > MAX_X or target_y < MIN_Y or target_y > MAX_Y:
          print(f"WARNING: Coordinate ({target_x}, {target_y}) is out of bounds.")
          print(f"-> Allowed ranges: X ({MIN_X} to {MAX_X}), Y ({MIN_Y} to {MAX_Y})")
-         # return  # <--- DISABLED to force movement
+         print("-> Move aborted to prevent crashing!")
+         return  # <--- ENABLED bounds enforcement to prevent moving out of bounds
 
     # 3. Move the CNC (Sequentially)
     print("\n=======================================================")

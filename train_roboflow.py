@@ -192,6 +192,8 @@ def train_yolov26_from_roboflow(
             verbose=False,
             plots=False,  # Reduce overhead and potential logging
             multi_scale=multi_scale,
+            rect=False,   # Multi-scale doesn't work well with rectangular training
+            mosaic=1.0,   # Ensure mosaic is on for multi-scale robustness
         )
     finally:
         # Restore logger and close progress bar

@@ -210,6 +210,10 @@ def testing_middle_dot():
     finally:
         running = False
         print("Cleaning up resources...")
+        
+        # CRITICAL STOP: Power off motors and stop queue!
+        if hasattr(loteria_bot_controller, 'emergency_stop'):
+            loteria_bot_controller.emergency_stop()
 
         # waiting for threads to finish
         for thread in threads:

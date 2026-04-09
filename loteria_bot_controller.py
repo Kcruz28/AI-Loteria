@@ -20,8 +20,24 @@ SPEED_Y = 100
 ORIGIN_X = 0   # fully left
 ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
 
+# Invert Axes Configuration (Change to False if it's mirroring incorrectly)
+INVERT_X_AXIS = True
+INVERT_Y_AXIS = True
+
 # Hardware connections
 # Auto-detect the USB serial port for the GRBL Arduino
+def emergency_stop():
+    global grbl
+    print("\n\n[CNC] 🛑 TRIGGERING EMERGENCY STOP TO MOTORS! 🛑")
+    if grbl is not None:
+        try:
+            grbl.write(b'!') # GRBL Feed Hold (Stop instantly)
+            time.sleep(0.1)
+            grbl.write(b'\x18') # GRBL Soft Reset (Clear memory)
+            print("[CNC] 🛑 Robot halted.")
+        except Exception as e:
+            print(f"Failed to send stop command: {e}")
+
 def connect_grbl():
     ports = serial.tools.list_ports.comports()
     for port in ports:
@@ -233,6 +249,11 @@ def drop_bean(pixel_x, pixel_y):
 
     # 1. Do the Math
     target_x, target_y = pixel_to_mm(pixel_x, pixel_y, matrix)
+
+    if getattr(globals(), "INVERT_X_AXIS", False):
+        target_x = 150 - target_x  # Flips horizontally across the 150mm board
+    if getattr(globals(), "INVERT_Y_AXIS", False):
+        target_y = 240 - target_y  # Flips vertically across the 240mm board
     
     # Round to 2 decimal places for GCODE
     target_x = round(target_x, 2)

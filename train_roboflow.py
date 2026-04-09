@@ -30,6 +30,7 @@ def train_yolov26_from_roboflow(
     epochs: int = 100,
     imgsz: int = 640,
     batch: int = 16,
+    workers: int | None = 4,
     device: str | None = None,
     project_dir: str = "runs/detect",
     run_name: str = "loteria_yolo_26",
@@ -69,6 +70,10 @@ def train_yolov26_from_roboflow(
     if not dataset_path.exists():
         raise FileNotFoundError(f"Dataset config not found: {dataset_yaml}")
 
+    if workers is None:
+        cpu_count = os.cpu_count() or 2
+        workers = max(2, min(8, cpu_count // 2))
+
     model_path = Path(model)
     if not model_path.exists() and model != "yolov26.pt":
         raise FileNotFoundError(f"Base model not found: {model}")
@@ -79,6 +84,7 @@ def train_yolov26_from_roboflow(
         epochs=epochs,
         imgsz=imgsz,
         batch=batch,
+        workers=workers,
         device=device,
         project=project_dir,
         name=run_name,
@@ -109,6 +115,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--batch", type=int, default=16)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=None,
+        help="Number of dataloader workers (auto if omitted)",
+    )
     parser.add_argument("--device", default=None, help="cuda, cpu, mps, or device index")
     parser.add_argument("--project-dir", default="runs/detect")
     parser.add_argument("--run-name", default="loteria_yolo")
@@ -132,6 +144,7 @@ def main() -> None:
         epochs=args.epochs,
         imgsz=args.imgsz,
         batch=args.batch,
+        workers=args.workers,
         device=args.device,
         project_dir=args.project_dir,
         run_name=args.run_name,

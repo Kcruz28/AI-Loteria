@@ -391,9 +391,9 @@ if __name__ == "__main__":
                     print("--> SIMULATED: Config command accepted.")
             elif cmd:
                 try:
-                    parts = cmd.split()
-                    axis = parts[0]
-                    val = float(parts[1])
+                    cmd_clean = cmd.replace(" ", "")
+                    axis = cmd_clean[0]
+                    val = float(cmd_clean[1:])
                     if axis in ['X', 'Y', 'Z']:
                         feed_rate = SPEED_Y if axis == 'Y' else SPEED_X
                         gcode_cmd = f"G1 {axis}{val} F{feed_rate}"
@@ -408,4 +408,4 @@ if __name__ == "__main__":
                         print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Unrecognized axis '{axis}'. Please start with X, Y, or Z.")
                 except Exception as e:
                     print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Exception parsing input '{cmd}': {e}")
-                    print("Invalid input! Try something like: X 10")
+                    print("Invalid input! Try something like: X 10 or X -10")

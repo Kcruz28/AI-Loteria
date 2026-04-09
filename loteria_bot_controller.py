@@ -22,7 +22,7 @@ ORIGIN_Y = -5  # negative to park UP without hitting the top frame hard
 
 # Invert Axes Configuration (Change 1 to -1 to reverse the physical movement polarity)
 # If positive X moves the motor LEFT (wrong way), setting MULTIPLIER_X to -1 sends negative coordinates to fix it!
-MULTIPLIER_X = -1
+MULTIPLIER_X = 1
 MULTIPLIER_Y = 1
 
 # Hardware connections
@@ -81,14 +81,13 @@ def calibrate_homography():
     print("We need to map 4 points from the Camera (Pixels) to the Gantry (Millimeters).")
     
     # 1. Physical Coordinates (Where the CNC actually is in mm)
-    # Example: A 150mm x 240mm Loteria Board
-    # You should measure exactly where these 4 points are on your machine.
-    # Format: [X_mm, Y_mm]
+    # Example: A typical Loteria Board is roughly 150mm x 240mm.
+    # Format: [X_unit, Y_unit]
     physical_pts = np.array([
         [0, 0],         # Top-Left corner of board
-        [150, 0],       # Top-Right corner
-        [150, 240],     # Bottom-Right corner
-        [0, 240]        # Bottom-Left corner
+        [6, 0],         # Top-Right corner
+        [6, 3],         # Bottom-Right corner
+        [0, 3]          # Bottom-Left corner
     ], dtype=np.float32)
 
     # 2. Pixel Coordinates (Camera click calibration)
@@ -264,19 +263,17 @@ def drop_bean(pixel_x, pixel_y):
     print(f"Transformed to Physical Board: X:{target_x}mm, Y:{target_y}mm")
     
     # 2. Add safety limits (prevent crashing the CNC)
-    # Accounting for the physical size of the carriage on each rail
-    # so the motor doesn't crash into the end.
-    X_RAIL_LENGTH = 300
-    X_CARRIAGE_WIDTH = 70
-    MAX_X = X_RAIL_LENGTH - X_CARRIAGE_WIDTH  # ~230 mm true usable travel
+    # Applying the computational machine bounds (6 units = 380mm, 3 units = 250mm)
+    MAX_X = 6
+    MIN_X = -6
     
-    Y_RAIL_LENGTH = 200
-    Y_CARRIAGE_WIDTH = 107
-    MAX_Y = Y_RAIL_LENGTH - Y_CARRIAGE_WIDTH  # ~93 mm true usable travel
+    MAX_Y = 3
+    MIN_Y = -3
     
-    if target_x < 0 or target_x > MAX_X or target_y < 0 or target_y > MAX_Y:
+    # Check boundaries using the new constraints
+    if target_x < MIN_X or target_x > MAX_X or target_y < MIN_Y or target_y > MAX_Y:
          print(f"WARNING: Coordinate ({target_x}, {target_y}) is out of bounds.")
-         print(f"-> Allowed ranges: X (0 to {MAX_X}), Y (0 to {MAX_Y})")
+         print(f"-> Allowed ranges: X ({MIN_X} to {MAX_X}), Y ({MIN_Y} to {MAX_Y})")
          # return  # <--- DISABLED to force movement
 
     # 3. Move the CNC (Sequentially)

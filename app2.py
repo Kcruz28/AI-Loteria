@@ -103,7 +103,7 @@ def testing_middle_dot():
 
     # model = YOLO("best.onnx", task="detect")
 
-    model = YOLO("yolo26n.pt")  # for .pt
+    model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
     cap0 = cv2.VideoCapture(0)

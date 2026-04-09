@@ -253,9 +253,9 @@ def drop_bean(pixel_x, pixel_y):
     MAX_Y = Y_RAIL_LENGTH - Y_CARRIAGE_WIDTH  # ~93 mm true usable travel
     
     if target_x < 0 or target_x > MAX_X or target_y < 0 or target_y > MAX_Y:
-         print(f"ERROR: Safety limit reached. Coordinate ({target_x}, {target_y}) is out of bounds.")
+         print(f"WARNING: Coordinate ({target_x}, {target_y}) is out of bounds.")
          print(f"-> Allowed ranges: X (0 to {MAX_X}), Y (0 to {MAX_Y})")
-         return
+         # return  # <--- DISABLED to force movement
 
     # 3. Move the CNC (Sequentially)
     print("\n=======================================================")

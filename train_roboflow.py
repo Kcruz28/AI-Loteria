@@ -10,12 +10,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
 from ultralytics import YOLO
 from ultralytics.utils import LOGGER
-from ultralytics.models.yolo.detect.train import DetectionTrainer
 
 
 load_dotenv()
@@ -84,6 +84,10 @@ def _load_yolo_model(model: str) -> YOLO:
     return YOLO(model)
 
 
+def _timestamp_slug() -> str:
+    return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
 def train_yolov26_from_roboflow(
     data_yaml: str | None = None,
     *,
@@ -146,6 +150,9 @@ def train_yolov26_from_roboflow(
         cpu_count = os.cpu_count() or 2
         workers = max(2, min(8, cpu_count // 2))
 
+    # Always create a unique run folder so old runs are preserved for comparison.
+    run_name = f"{run_name}_{_timestamp_slug()}"
+
     model_obj = _load_yolo_model(model)
     os.environ["YOLO_VERBOSE"] = "False"
 
@@ -169,15 +176,23 @@ def train_yolov26_from_roboflow(
             device=device,
             project=project_dir,
             name=run_name,
-            exist_ok=True,
+            exist_ok=False,
             verbose=False,
         )
     finally:
         LOGGER.info = original_logger_info
 
     best_weights = Path(project_dir) / run_name / "weights" / "best.pt"
+    default_save_path = save_path == "best_yolov26.pt"
+    if default_save_path:
+        archived_dir = Path("models")
+        archived_dir.mkdir(parents=True, exist_ok=True)
+        save_path = str(archived_dir / f"{run_name}_best.pt")
+
     if best_weights.exists():
         shutil.copy2(best_weights, save_path)
+        print(f"Saved run best weights: {save_path}")
+    print(f"Run directory: {Path(project_dir) / run_name}")
 
     return train_result
 

@@ -173,7 +173,7 @@ def testing_middle_dot():
         thread.start()
 
     try:
-        last_frames = {}  # saving in case it is slow
+        last_frames = {} 
 
         while running:
             frames_to_show = {}

@@ -16,12 +16,12 @@ try:
         
         # 1. Move X positive by 5
         print("--> Moving X axis positive (+5)...")
-        lbc.send_gcode(f"G1 X5 F{lbc.SPEED_X}")
+        lbc.send_gcode(f"G1 X-6 F{lbc.SPEED_X}")
         time.sleep(4)  # Wait for movement to finish
         
         # 2. Move X negative by 5
         print("--> Moving X axis negative (-5)...")
-        lbc.send_gcode(f"G1 X-5 F{lbc.SPEED_X}")
+        lbc.send_gcode(f"G1 X6 F{lbc.SPEED_X}")
         time.sleep(4)
 
         # 3. Move Y positive by 2

@@ -59,29 +59,14 @@ def coordinate_objects(results, frame, shared_classes=None):
                         class_color[cls] = True  # remenber it was seen by both cameras (or we are testing)
                         green_cards.add(cls)
                         
-                        # Apply bounds filtering BEFORE sending to the robot
-                        # And negate coordinates to reverse movement polarity
-                        x_movement = -x_mid
-                        y_movement = -y_mid
-
                         print(f"\n=======================================================")
-                        print(f"🟢 BINGO! Class {cls} matched!")
-                        print(f"Pixels: ({x_mid}, {y_mid}) -> Movement Target: ({x_movement}, {y_movement})")
-
-                        MAX_X = 6
-                        MIN_X = -6
-                        MAX_Y = 3
-                        MIN_Y = -3
-                        
-                        # Note: we need to translate the pixel bounds to the physical bounds check if applicable.
-                        # However, because you asked to reverse the logic directly:
-                        # Let's pass the negated coordinates to the bot controller
+                        print(f"🟢 BINGO! Class {cls} matched at pixel coords ({x_mid}, {y_mid})!")
                         print(f"Triggering robot to drop bean...")
                         print(f"=======================================================\n")
                         
                         # Trigger CNC to drop bean at the midpoint of the detected square
                         # We run this in a separate thread so it doesn't freeze the camera feed
-                        threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_movement, y_movement), daemon=True).start()
+                        threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_mid, y_mid), daemon=True).start()
 
                 cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
                 cv2.putText(

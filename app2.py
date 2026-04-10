@@ -106,50 +106,14 @@ def testing_middle_dot():
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
-    # --- Quietly Configure Cameras ---
-    print("🔌 Starting camera sequence... Please wait.")
-    
-    # 1. Grab primary USB Cam (Usually 0)
-    # Temporarily hide OpenCV errors from flooding the terminal
-    os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
-    
     cap0 = cv2.VideoCapture(0)
-    if not cap0.isOpened():
-        print("❌ CRITICAL ERROR: Could not find primary USB camera on /dev/video0!")
-        return
-        
+    cap1 = cv2.VideoCapture(1)
+
+    #  reduce resolution for better performance
     cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    print("✅ Found primary USB webcam.")
-    
-    # 2. Try to grab secondary cam cleanly
-    cap1 = None
-    
-    # Quick probe of index 1 (user confirmed Raspberry Pi cam slot)
-    cap_test = cv2.VideoCapture(1)
-    if cap_test.isOpened():
-        ret, _ = cap_test.read()
-        if ret:
-            cap1 = cap_test
-            print("✅ Found secondary camera at index 1.")
-        else:
-            cap_test.release()
-            
-    # If no secondary USB cam found, try the Pi Ribbon Libcamera Pipeline
-    if cap1 is None:
-        print("⚠️ No secondary USB found. Attempting to force connect Raspberry Pi Ribbon Camera...")
-        pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, framerate=30/1 ! videoconvert ! appsink"
-        cap1 = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-        
-        if cap1.isOpened():
-            print("✅ Successfully connected to Raspberry Pi Ribbon Camera via GStreamer!")
-        else:
-            print("❌ Failed to find Raspberry Pi Camera. Running in single-camera fallback mode.")
-            cap1 = None
-            
-    if cap1 is not None:
-        cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     # setting up lock
     frames = {}
@@ -199,9 +163,9 @@ def testing_middle_dot():
             time.sleep(0.001)
 
     threads = []
-    if cap0 is not None and cap0.isOpened():
+    if cap0.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
-    if cap1 is not None and cap1.isOpened():
+    if cap1.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
 
     for thread in threads:
@@ -255,8 +219,8 @@ def testing_middle_dot():
         for thread in threads:
             thread.join(timeout=1.0)
 
-        if cap0 is not None: cap0.release()
-        if cap1 is not None: cap1.release()
+        cap0.release()
+        cap1.release()
         cv2.destroyAllWindows()
 
         torch.cuda.empty_cache() if device.type == "cuda" else None

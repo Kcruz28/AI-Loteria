@@ -11,7 +11,7 @@ import loteria_bot_controller
 # ==========================================
 # Set this to True if you only have 1 camera connected and want to test the CNC movement.
 # When True, it will drop a bean on ANY card it detects immediately.
-TEST_MODE_SINGLE_CAMERA = True
+TEST_MODE_SINGLE_CAMERA = False
 
 
 class_color = {}
@@ -106,14 +106,36 @@ def testing_middle_dot():
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
-    cap0 = cv2.VideoCapture(0)
-    cap1 = cv2.VideoCapture(1)
-
-    #  reduce resolution for better performance
+    # --- Auto-Detect Working Cameras ---
+    print("🔌 Scanning for connected cameras... Please wait.")
+    available_cams = []
+    for i in range(10):
+        cap_test = cv2.VideoCapture(i)
+        if cap_test.isOpened():
+            ret, _ = cap_test.read()
+            if ret:
+                print(f"✅ Found working camera at index: {i}")
+                available_cams.append(i)
+            cap_test.release()
+        if len(available_cams) >= 2:
+            break
+            
+    if len(available_cams) == 0:
+        print("❌ CRITICAL ERROR: Could not find ANY connected cameras!")
+        return
+        
+    cap0 = cv2.VideoCapture(available_cams[0])
     cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    
+    # Try to grab the second camera if it exists
+    cap1 = None
+    if len(available_cams) >= 2:
+        cap1 = cv2.VideoCapture(available_cams[1])
+        cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    else:
+        print("⚠️ Warning: Only one camera detected! Running in single-camera fallback mode.")
 
     # setting up lock
     frames = {}
@@ -163,9 +185,9 @@ def testing_middle_dot():
             time.sleep(0.001)
 
     threads = []
-    if cap0.isOpened():
+    if cap0 is not None and cap0.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
-    if cap1.isOpened():
+    if cap1 is not None and cap1.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
 
     for thread in threads:
@@ -219,8 +241,8 @@ def testing_middle_dot():
         for thread in threads:
             thread.join(timeout=1.0)
 
-        cap0.release()
-        cap1.release()
+        if cap0 is not None: cap0.release()
+        if cap1 is not None: cap1.release()
         cv2.destroyAllWindows()
 
         torch.cuda.empty_cache() if device.type == "cuda" else None

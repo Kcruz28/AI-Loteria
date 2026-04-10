@@ -17,10 +17,13 @@ tablas = [
     "tabla 6", "tabla 7", "tabla 8", "tabla 9", "tabla 10",
 ]
 
-green_cards  = set()        # Cards fully handled (bean dropped)
-queued_cards = set()        # Cards waiting in the drop queue
-drop_queue   = queue.Queue()  # (cls, x_mid, y_mid)
+green_cards  = set()
+queued_cards = set()
+drop_queue   = queue.Queue()
 queue_lock   = threading.Lock()
+
+# Calibration mode state — True when robot is waiting for WASD confirmation
+calibrating  = False
 
 
 # ==============================================================================
@@ -32,33 +35,34 @@ def log(tag, msg):
 
 
 # ==============================================================================
-# DROP WORKER — one thread, one drop at a time
+# DROP WORKER
 # ==============================================================================
 def drop_worker():
-    log("WORKER", "Drop worker ready and waiting for matches...")
+    global calibrating
+    log("WORKER", "Drop worker ready.")
     while True:
         cls, x_mid, y_mid = drop_queue.get()
+        log("WORKER", f"▶ Match: class {cls} ({loteria_bot_controller.CARD_NAMES.get(cls, '?')})")
 
-        log("WORKER", f"▶ Starting drop for class {cls}")
-
+        calibrating = True
         try:
-            # Pass class ID — controller looks up exact grid position directly
-            # pixel coords passed as fallback (not used if class is in grid)
             loteria_bot_controller.drop_bean(cls, pixel_x=x_mid, pixel_y=y_mid)
-            log("WORKER", f"✅ Drop complete for class {cls}. Robot parked.")
+            log("WORKER", f"✅ Done: class {cls}. Robot parked.")
         except Exception as e:
             log("WORKER", f"❌ Drop FAILED for class {cls}: {e}")
+        finally:
+            calibrating = False
 
         with queue_lock:
             green_cards.add(cls)
             queued_cards.discard(cls)
 
-        log("WORKER", f"Cards done: {len(green_cards)} | Remaining in queue: {drop_queue.qsize()}")
+        log("WORKER", f"Cards done: {len(green_cards)} | Remaining: {drop_queue.qsize()}")
         drop_queue.task_done()
 
 
 # ==============================================================================
-# VISION — classify detections and queue new matches
+# VISION
 # ==============================================================================
 def coordinate_objects(results, frame, shared_classes=None):
     detected_classes = set()
@@ -75,7 +79,6 @@ def coordinate_objects(results, frame, shared_classes=None):
 
                 detected_classes.add(cls)
 
-                # Skip tabla overlay classes
                 if cls not in tablas:
                     with queue_lock:
                         already_done   = cls in green_cards
@@ -83,37 +86,35 @@ def coordinate_objects(results, frame, shared_classes=None):
                         is_match       = (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA
 
                     if already_done:
-                        color = (0, 255, 0)     # Green  — bean dropped
+                        color = (0, 255, 0)
 
                     elif already_queued:
-                        color = (0, 255, 255)   # Yellow — queued
+                        color = (0, 255, 255)
 
                     elif is_match:
-                        color = (0, 165, 255)   # Orange — new match
-
-                        # Check if this class is in the known grid before queuing
+                        color = (0, 165, 255)
                         if cls in loteria_bot_controller.CARD_GRID:
                             with queue_lock:
                                 queued_cards.add(cls)
                             drop_queue.put((cls, x_mid, y_mid))
                             row, col = loteria_bot_controller.CARD_GRID[cls]
-                            log("VISION", f"🎯 MATCH! Class {cls} @ grid ({row},{col}) — queue: {drop_queue.qsize()}")
+                            log("VISION", f"🎯 MATCH: {loteria_bot_controller.CARD_NAMES.get(cls,'?')} cls={cls} grid=({row},{col})")
                         else:
-                            log("VISION", f"⚠️  Class {cls} matched but not in grid map — skipping.")
+                            log("VISION", f"⚠️  Class {cls} not in grid — skipping.")
 
                     else:
-                        color = (0, 0, 255)     # Red    — one camera only
+                        color = (0, 0, 255)
 
                     cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
 
-                    # Show class name from grid if available
-                    label = f"cls:{cls}"
+                    name  = loteria_bot_controller.CARD_NAMES.get(cls, f"cls:{cls}")
+                    label = f"{name}"
                     if cls in loteria_bot_controller.CARD_GRID:
                         r, c = loteria_bot_controller.CARD_GRID[cls]
-                        label = f"{cls} ({r},{c})"
+                        label = f"{name} ({r},{c})"
 
                     cv2.putText(frame, label, (x_mid + 10, y_mid),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
     if len(green_cards) >= total_cards:
         cv2.putText(frame, "LOTERIA!", (80, 100),
@@ -123,9 +124,36 @@ def coordinate_objects(results, frame, shared_classes=None):
 
 
 # ==============================================================================
+# OVERLAY — shown on camera when calibration mode is active
+# ==============================================================================
+def draw_calibration_overlay(frame, step_idx):
+    h, w = frame.shape[:2]
+
+    # Semi-transparent dark banner at bottom
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, h - 110), (w, h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+
+    step_label = loteria_bot_controller.JOG_STEP_LABELS[step_idx]
+
+    cv2.putText(frame, "CALIBRATION MODE — Jog robot to card center",
+                (10, h - 85), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 1)
+    cv2.putText(frame, "W=up  S=down  A=left  D=right",
+                (10, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+    cv2.putText(frame, f"Step: {step_label}   (+) bigger  (-) smaller",
+                (10, h - 35), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+    cv2.putText(frame, "SPACE = confirm & save    E = skip (no save)",
+                (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
+
+    return frame
+
+
+# ==============================================================================
 # MAIN
 # ==============================================================================
 def testing_middle_dot():
+    global calibrating
+
     device = torch.device(
         "cuda" if torch.cuda.is_available()
         else "mps" if torch.backends.mps.is_available()
@@ -138,7 +166,7 @@ def testing_middle_dot():
     log("SETUP", "YOLO model loaded.")
 
     threading.Thread(target=drop_worker, daemon=True).start()
-    log("SETUP", "Drop worker thread started.")
+    log("SETUP", "Drop worker started.")
 
     cap0 = cv2.VideoCapture(8)
     cap1 = cv2.VideoCapture(10)
@@ -164,11 +192,10 @@ def testing_middle_dot():
 
         while running and cap.isOpened():
             ret, frame = cap.read()
-
             if not ret:
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_FAILURES:
-                    log("CAM", f"❌ Camera {camera_id} lost. Stopping.")
+                    log("CAM", f"❌ Camera {camera_id} lost.")
                     break
                 time.sleep(0.1)
                 continue
@@ -207,10 +234,12 @@ def testing_middle_dot():
     for t in threads:
         t.start()
 
-    log("SETUP", "Camera threads started. Press 'r' to reset, 'q' to quit.")
+    log("SETUP", "Camera threads started.")
+    log("SETUP", "Keys: R=reset  Q=quit | During calibration: WASD=jog  SPACE=confirm  E=skip  +/-=step size")
 
     try:
-        last_frames = {}
+        last_frames    = {}
+        jog_step_idx   = loteria_bot_controller.DEFAULT_JOG_STEP_IDX
 
         while running:
             with frames_lock:
@@ -225,38 +254,82 @@ def testing_middle_dot():
                     done   = len(green_cards)
                     queued = drop_queue.qsize()
 
-                status = f"Done: {done}/16 | Queued: {queued}"
+                # Status bar
+                cal_data = loteria_bot_controller.load_calibration_data()
+                n_cal    = len(cal_data)
+                status   = f"Done: {done}/16 | Queued: {queued} | Calibrated: {n_cal} cards"
                 cv2.putText(frame, status, (10, 30),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+                # Calibration overlay when active
+                if calibrating:
+                    frame = draw_calibration_overlay(frame, jog_step_idx)
+
                 cv2.imshow(f"Camera {camera_id}", frame)
 
+            # ----------------------------------------------------------------
+            # KEY HANDLER
+            # ----------------------------------------------------------------
             key = cv2.waitKey(10) & 0xFF
 
-            if key == ord("r"):
-                with queue_lock:
-                    green_cards.clear()
-                    queued_cards.clear()
-                while not drop_queue.empty():
-                    try:
-                        drop_queue.get_nowait()
-                        drop_queue.task_done()
-                    except queue.Empty:
-                        break
-                with frames_lock:
-                    camera_class_ids.clear()
-                log("RESET", "♻️  Game reset — all cards cleared.")
+            if calibrating:
+                # WASD jog
+                if key == ord('w') or key == ord('W'):
+                    loteria_bot_controller.set_jog_command('W')
+                elif key == ord('s') or key == ord('S'):
+                    loteria_bot_controller.set_jog_command('S')
+                elif key == ord('a') or key == ord('A'):
+                    loteria_bot_controller.set_jog_command('A')
+                elif key == ord('d') or key == ord('D'):
+                    loteria_bot_controller.set_jog_command('D')
 
-            elif key == ord("q"):
-                running = False
-                log("MAIN", "Quit requested.")
-                break
+                # Step size
+                elif key == ord('+') or key == ord('='):
+                    jog_step_idx = min(jog_step_idx + 1, len(loteria_bot_controller.JOG_STEPS) - 1)
+                    loteria_bot_controller.set_jog_step(jog_step_idx)
+                    log("CAL", f"Step size → {loteria_bot_controller.JOG_STEP_LABELS[jog_step_idx]}")
+                elif key == ord('-'):
+                    jog_step_idx = max(jog_step_idx - 1, 0)
+                    loteria_bot_controller.set_jog_step(jog_step_idx)
+                    log("CAL", f"Step size → {loteria_bot_controller.JOG_STEP_LABELS[jog_step_idx]}")
+
+                # Confirm
+                elif key == ord(' '):
+                    log("CAL", "SPACE pressed — confirming position.")
+                    loteria_bot_controller.confirm_position()
+
+                # Skip
+                elif key == ord('e') or key == ord('E'):
+                    log("CAL", "E pressed — skipping calibration for this card.")
+                    loteria_bot_controller.skip_calibration()
+
+            else:
+                # Normal mode keys
+                if key == ord('r') or key == ord('R'):
+                    with queue_lock:
+                        green_cards.clear()
+                        queued_cards.clear()
+                    while not drop_queue.empty():
+                        try:
+                            drop_queue.get_nowait()
+                            drop_queue.task_done()
+                        except queue.Empty:
+                            break
+                    with frames_lock:
+                        camera_class_ids.clear()
+                    log("RESET", "♻️  Game reset.")
+
+                elif key == ord('q') or key == ord('Q'):
+                    running = False
+                    log("MAIN", "Quit requested.")
+                    break
 
             if device.type == "cuda":
                 torch.cuda.empty_cache()
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        log("MAIN", "Keyboard interrupt received.")
+        log("MAIN", "Keyboard interrupt.")
     finally:
         running = False
         log("MAIN", "Shutting down...")

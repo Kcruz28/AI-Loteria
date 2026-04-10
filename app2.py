@@ -135,7 +135,16 @@ def testing_middle_dot():
         cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     else:
-        print("⚠️ Warning: Only one camera detected! Running in single-camera fallback mode.")
+        print("⚠️ Only one standard USB camera detected! Attempting to force connect the Raspberry Pi Ribbon Camera...")
+        # Force the Pi Ribbon Camera to use the modern libcamera pipeline via GStreamer
+        pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, framerate=30/1 ! videoconvert ! appsink"
+        cap1 = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
+        
+        if cap1 is not None and cap1.isOpened():
+            print("✅ Successfully connected to Raspberry Pi Ribbon Camera via GStreamer!")
+        else:
+            print("❌ Failed to find Raspberry Pi Camera. Running in single-camera fallback mode.")
+            cap1 = None
 
     # setting up lock
     frames = {}

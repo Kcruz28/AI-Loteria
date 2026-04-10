@@ -168,10 +168,10 @@ def testing_middle_dot():
     threading.Thread(target=drop_worker, daemon=True).start()
     log("SETUP", "Drop worker started.")
 
-    cap0 = cv2.VideoCapture(8)
-    cap1 = cv2.VideoCapture(10)
-    log("SETUP", f"Camera 8  open: {cap0.isOpened()}")
-    log("SETUP", f"Camera 10 open: {cap1.isOpened()}")
+    cap0 = cv2.VideoCapture(0)
+    cap1 = cv2.VideoCapture(2)
+    log("SETUP", f"Camera 0 open: {cap0.isOpened()}")
+    log("SETUP", f"Camera 2 open: {cap1.isOpened()}")
 
     for cap in [cap0, cap1]:
         if cap.isOpened():

@@ -19,7 +19,7 @@ ORIGIN_Y = 0
 
 # Servo Degrees/PWM (GRBL M3 S commands)
 # Adjust these based on your specific servo's range
-SERVO_OPEN  = 180  # Full rotation for drop
+SERVO_OPEN  = 750  # Full rotation for drop
 SERVO_CLOSE = 0    # Home position
 
 CAMERA_INDEX = 8

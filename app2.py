@@ -172,22 +172,26 @@ def testing_middle_dot():
             time.sleep(0.001)
 
     threads = []
-    for cam, cam_id in [(cap0, 0), (cap1, 1)]:
-        if cam is not None and cam.isOpened():
-            t = threading.Thread(target=capture_process, args=(cam, cam_id))
-            t.daemon = True
-            threads.append(t)
+    if cap0.isOpened():
+        threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
+    if cap1 is not None and cap1.isOpened():
+        threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
 
     for thread in threads:
+        thread.daemon = True
         thread.start()
 
     try:
         last_frames = {} 
 
         while running:
+            frames_to_show = {}
             with frames_lock:
-                last_frames.update(frames)
-                frames.clear()
+                frames_to_show = frames.copy()
+                frames.clear()  # avoid memory build-up
+
+            for camera_id, frame in frames_to_show.items():
+                last_frames[camera_id] = frame
 
             # recent frames
             for camera_id, frame in last_frames.items():

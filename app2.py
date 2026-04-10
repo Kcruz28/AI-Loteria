@@ -106,45 +106,50 @@ def testing_middle_dot():
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
-    # --- Auto-Detect Working Cameras ---
-    print("🔌 Scanning for connected cameras... Please wait.")
-    available_cams = []
-    for i in range(10):
-        cap_test = cv2.VideoCapture(i)
-        if cap_test.isOpened():
-            ret, _ = cap_test.read()
-            if ret:
-                print(f"✅ Found working camera at index: {i}")
-                available_cams.append(i)
-            cap_test.release()
-        if len(available_cams) >= 2:
-            break
-            
-    if len(available_cams) == 0:
-        print("❌ CRITICAL ERROR: Could not find ANY connected cameras!")
+    # --- Quietly Configure Cameras ---
+    print("🔌 Starting camera sequence... Please wait.")
+    
+    # 1. Grab primary USB Cam (Usually 0)
+    # Temporarily hide OpenCV errors from flooding the terminal
+    os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
+    
+    cap0 = cv2.VideoCapture(0)
+    if not cap0.isOpened():
+        print("❌ CRITICAL ERROR: Could not find primary USB camera on /dev/video0!")
         return
         
-    cap0 = cv2.VideoCapture(available_cams[0])
     cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    print("✅ Found primary USB webcam.")
     
-    # Try to grab the second camera if it exists
+    # 2. Try to grab secondary cam cleanly
     cap1 = None
-    if len(available_cams) >= 2:
-        cap1 = cv2.VideoCapture(available_cams[1])
-        cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    else:
-        print("⚠️ Only one standard USB camera detected! Attempting to force connect the Raspberry Pi Ribbon Camera...")
-        # Force the Pi Ribbon Camera to use the modern libcamera pipeline via GStreamer
+    
+    # Quick probe of index 1 (user confirmed Raspberry Pi cam slot)
+    cap_test = cv2.VideoCapture(1)
+    if cap_test.isOpened():
+        ret, _ = cap_test.read()
+        if ret:
+            cap1 = cap_test
+            print("✅ Found secondary camera at index 1.")
+        else:
+            cap_test.release()
+            
+    # If no secondary USB cam found, try the Pi Ribbon Libcamera Pipeline
+    if cap1 is None:
+        print("⚠️ No secondary USB found. Attempting to force connect Raspberry Pi Ribbon Camera...")
         pipeline = "libcamerasrc ! video/x-raw, width=640, height=480, framerate=30/1 ! videoconvert ! appsink"
         cap1 = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
         
-        if cap1 is not None and cap1.isOpened():
+        if cap1.isOpened():
             print("✅ Successfully connected to Raspberry Pi Ribbon Camera via GStreamer!")
         else:
             print("❌ Failed to find Raspberry Pi Camera. Running in single-camera fallback mode.")
             cap1 = None
+            
+    if cap1 is not None:
+        cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     # setting up lock
     frames = {}

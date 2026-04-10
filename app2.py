@@ -122,15 +122,19 @@ def testing_middle_dot():
         temp.release()
         
     if cap1 is None:
-        print("❌ ERROR: Could not find ANY secondary camera at indexes 1, 2, or 4!")
-        # Fallback to dummy so script doesn't crash, but it won't pop a window
-        cap1 = cv2.VideoCapture(-1) 
+        print("❌ Only 1 camera found. Set TEST_MODE_SINGLE_CAMERA = True to test.")
+        # Don't assign VideoCapture(-1) — just skip it
+        
+    print(f"Camera 0 open: {cap0.isOpened()}")
+    print(f"Camera 1 open: {cap1 is not None and cap1.isOpened()}")
 
     #  reduce resolution for better performance
-    cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    if cap0 is not None and cap0.isOpened():
+        cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    if cap1 is not None and cap1.isOpened():
+        cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
     # setting up lock
     frames = {}
@@ -180,26 +184,22 @@ def testing_middle_dot():
             time.sleep(0.001)
 
     threads = []
-    if cap0.isOpened():
-        threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
-    if cap1.isOpened():
-        threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
+    for cam, cam_id in [(cap0, 0), (cap1, 1)]:
+        if cam is not None and cam.isOpened():
+            t = threading.Thread(target=capture_process, args=(cam, cam_id))
+            t.daemon = True
+            threads.append(t)
 
     for thread in threads:
-        thread.daemon = True
         thread.start()
 
     try:
         last_frames = {} 
 
         while running:
-            frames_to_show = {}
             with frames_lock:
-                frames_to_show = frames.copy()
-                frames.clear()  # avoid memory build-up
-
-            for camera_id, frame in frames_to_show.items():
-                last_frames[camera_id] = frame
+                last_frames.update(frames)
+                frames.clear()
 
             # recent frames
             for camera_id, frame in last_frames.items():
@@ -236,8 +236,10 @@ def testing_middle_dot():
         for thread in threads:
             thread.join(timeout=1.0)
 
-        cap0.release()
-        cap1.release()
+        if cap0 is not None:
+            cap0.release()
+        if cap1 is not None:
+            cap1.release()
         cv2.destroyAllWindows()
 
         torch.cuda.empty_cache() if device.type == "cuda" else None

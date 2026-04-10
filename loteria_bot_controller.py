@@ -17,6 +17,11 @@ SPEED_Y = 100
 ORIGIN_X = 0
 ORIGIN_Y = 0
 
+# Servo Degrees/PWM (GRBL M3 S commands)
+# Adjust these based on your specific servo's range
+SERVO_OPEN  = 180  # Full rotation for drop
+SERVO_CLOSE = 0    # Home position
+
 CAMERA_INDEX = 8
 
 # Machine travel limits in GRBL units
@@ -201,10 +206,10 @@ def drop_bean(cls_id, pixel_x=None, pixel_y=None):
         time.sleep(1.5)
 
         # Drop bean
-        print(f"[CNC] 👇 Dropping bean...")
-        send_gcode("M3 S90")
-        time.sleep(0.5)
-        send_gcode("M3 S0")
+        print(f"[CNC] 👇 Dropping bean (Full Rotation)...")
+        send_gcode(f"M3 S{SERVO_OPEN}")
+        time.sleep(0.8) # Slightly longer to ensure full movement
+        send_gcode(f"M3 S{SERVO_CLOSE}")
 
         # Park
         print(f"[CNC] 🅿️  Parking at origin...")
@@ -260,9 +265,10 @@ if __name__ == "__main__":
                 send_gcode("G90")
                 break
             elif cmd == 'SERVO':
-                send_gcode("M3 S90")
-                time.sleep(0.5)
-                send_gcode("M3 S0")
+                print("[CNC] Manual Servo Test (Full Rotation)")
+                send_gcode(f"M3 S{SERVO_OPEN}")
+                time.sleep(0.8)
+                send_gcode(f"M3 S{SERVO_CLOSE}")
             elif cmd == 'ORIGIN':
                 send_gcode("G90")
                 send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}")

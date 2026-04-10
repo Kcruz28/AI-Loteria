@@ -56,14 +56,14 @@ def coordinate_objects(results, frame, shared_classes=None):
                         color = (0, 255, 0)  # Green
                     elif (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA:
                         color = (0, 255, 0)  # Green
-                        class_color[cls] = True  # remenber it was seen by both cameras (or we are testing)
+                        class_color[cls] = True  # remember it was seen by both cameras (or we are testing)
                         green_cards.add(cls)
-                        
+
                         print(f"\n=======================================================")
                         print(f"🟢 BINGO! Class {cls} matched at pixel coords ({x_mid}, {y_mid})!")
                         print(f"Triggering robot to drop bean...")
                         print(f"=======================================================\n")
-                        
+
                         # Trigger CNC to drop bean at the midpoint of the detected square
                         # We run this in a separate thread so it doesn't freeze the camera feed
                         threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_mid, y_mid), daemon=True).start()
@@ -79,16 +79,10 @@ def coordinate_objects(results, frame, shared_classes=None):
                     2,
                 )
 
-                # To prevent console spam, we won't print every single frame.
-                # Uncomment this if you need to debug raw vision tracking:
-                # print(f"Camera sees class {cls}, confidence {conf:.2f}, midpoint ({x_mid},{y_mid})")
-
     if green_cards == total_cards:
         cv2.putText(
             frame, "LOTERIA", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5
         )
-    # else:
-    #     cv2.putText(frame, f"Cards: {len(green_cards)} /{total_cards}", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 5)
 
     return detected_classes
 
@@ -101,23 +95,21 @@ def testing_middle_dot():
     )
     print(f"Using device: {device}")
 
-    # model = YOLO("best.onnx", task="detect")
-
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
     # -------------------------------------------------------------
     # CAMERA FIX FOR RASPBERRY PI WITH TWO USB CAMERAS
-    # USB Camera #1 is always 0. 
+    # USB Camera #1 is always 0.
     # USB Camera #2 is always 2. (Index 1 is taken by Camera #1's metadata/audio).
     # -------------------------------------------------------------
     cap0 = cv2.VideoCapture(0)
     cap1 = cv2.VideoCapture(2)
-        
+
     print(f"Camera 1 (Index 0) open: {cap0.isOpened()}")
     print(f"Camera 2 (Index 2) open: {cap1.isOpened()}")
 
-    # reduce resolution and throttle FPS to 10 to prevent Raspberry Pi USB 2.0 bandwidth crashes!
+    # Reduce resolution and throttle FPS to 10 to prevent Raspberry Pi USB 2.0 bandwidth crashes
     if cap0.isOpened():
         cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -127,25 +119,39 @@ def testing_middle_dot():
         cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         cap1.set(cv2.CAP_PROP_FPS, 10)
 
-    # setting up lock
+    # Setting up lock
     frames = {}
     frames_lock = threading.Lock()
     running = True
 
-    # skippinhg frames to reduce load
+    # Skipping frames to reduce load
     skip_frames = 2
 
     def capture_process(cap, camera_id):
         nonlocal running
+
+        # Give USB camera time to fully initialize before first read
+        time.sleep(2.0)
+
         frame_count = 0
+        consecutive_failures = 0
+        MAX_FAILURES = 10  # Allow some transient failures before giving up
 
         while running and cap.isOpened():
             ret, frame = cap.read()
-            if not ret:
-                print(f"Lost connection to Camera {camera_id}")
-                break
 
+            if not ret:
+                consecutive_failures += 1
+                print(f"Camera {camera_id}: Read failed ({consecutive_failures}/{MAX_FAILURES})")
+                if consecutive_failures >= MAX_FAILURES:
+                    print(f"Lost connection to Camera {camera_id}")
+                    break
+                time.sleep(0.1)  # Brief wait before retry
+                continue
+
+            consecutive_failures = 0  # Reset on successful read
             frame_count += 1
+
             if frame_count % skip_frames != 0:
                 continue
 
@@ -154,17 +160,17 @@ def testing_middle_dot():
                 results = model(frame, conf=confidence, imgsz=320)
                 annotated_frame = results[0].plot()
 
-                # grab other camera's classes
+                # Grab other camera's classes
                 other_camera_id = 1 - camera_id
                 with frames_lock:
                     shared_classes = camera_class_ids.get(other_camera_id, set())
 
-                # detect classes in this frame and draw
+                # Detect classes in this frame and draw
                 detected_classes = coordinate_objects(
                     results, annotated_frame, shared_classes
                 )
 
-                # save this frame and its detected classes
+                # Save this frame and its detected classes
                 with frames_lock:
                     frames[camera_id] = annotated_frame.copy()
                     camera_class_ids[camera_id] = detected_classes
@@ -185,22 +191,23 @@ def testing_middle_dot():
         thread.start()
 
     try:
-        last_frames = {} 
+        last_frames = {}
 
         while running:
             frames_to_show = {}
             with frames_lock:
                 frames_to_show = frames.copy()
-                frames.clear()  # avoid memory build-up
+                # Only clear frames we already consumed (avoids dropping frames mid-read)
+                for k in list(frames_to_show.keys()):
+                    frames.pop(k, None)
 
             for camera_id, frame in frames_to_show.items():
                 last_frames[camera_id] = frame
 
-            # recent frames
+            # Show most recent frames
             for camera_id, frame in last_frames.items():
                 cv2.imshow(f"Camera {camera_id}", frame)
 
-            # neeewww
             key = cv2.waitKey(10) & 0xFF
             if key == ord("r"):
                 green_cards.clear()
@@ -213,7 +220,7 @@ def testing_middle_dot():
                 print("Quitting application...")
                 break
 
-            # releasing memory
+            # Release GPU memory
             torch.cuda.empty_cache() if device.type == "cuda" else None
             time.sleep(0.01)
 
@@ -222,12 +229,12 @@ def testing_middle_dot():
     finally:
         running = False
         print("Cleaning up resources...")
-        
-        # CRITICAL STOP: Power off motors and stop queue!
+
+        # CRITICAL STOP: Power off motors and stop queue
         if hasattr(loteria_bot_controller, 'emergency_stop'):
             loteria_bot_controller.emergency_stop()
 
-        # waiting for threads to finish
+        # Wait for threads to finish
         for thread in threads:
             thread.join(timeout=1.0)
 

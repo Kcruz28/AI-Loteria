@@ -107,23 +107,11 @@ def testing_middle_dot():
     model.to(device)  # for .pt
 
     cap0 = cv2.VideoCapture(0)
-    
-    # USB cameras claim multiple slots unpredictably on Linux (0, 2, 4).
-    # This quietly tests the most common secondary slots without triggering errors!
-    cap1 = None
-    for test_idx in [1, 2, 4]:
-        temp = cv2.VideoCapture(test_idx)
-        if temp.isOpened():
-            ret, _ = temp.read()
-            if ret:
-                cap1 = temp
-                print(f"✅ SECURED CAMERA 2 AT INDEX: {test_idx}")
-                break
-        temp.release()
+    cap1 = cv2.VideoCapture(1)
         
-    if cap1 is None:
+    if not cap1.isOpened():
         print("❌ Only 1 camera found. Set TEST_MODE_SINGLE_CAMERA = True to test.")
-        # Don't assign VideoCapture(-1) — just skip it
+        cap1 = None
         
     print(f"Camera 0 open: {cap0.isOpened()}")
     print(f"Camera 1 open: {cap1 is not None and cap1.isOpened()}")

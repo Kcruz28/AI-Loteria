@@ -17,10 +17,10 @@ tablas = [
     "tabla 6", "tabla 7", "tabla 8", "tabla 9", "tabla 10",
 ]
 
-green_cards = set()     # Cards fully handled (bean dropped)
-queued_cards = set()    # Cards waiting in the drop queue
-drop_queue = queue.Queue()
-queue_lock = threading.Lock()
+green_cards  = set()        # Cards fully handled (bean dropped)
+queued_cards = set()        # Cards waiting in the drop queue
+drop_queue   = queue.Queue()  # (cls, x_mid, y_mid)
+queue_lock   = threading.Lock()
 
 
 # ==============================================================================
@@ -39,11 +39,12 @@ def drop_worker():
     while True:
         cls, x_mid, y_mid = drop_queue.get()
 
-        log("WORKER", f"▶ Starting drop for class {cls} at pixel ({x_mid}, {y_mid})")
+        log("WORKER", f"▶ Starting drop for class {cls}")
 
         try:
-            # Call drop_bean directly — it handles its own serial + robot_lock internally
-            loteria_bot_controller.drop_bean(x_mid, y_mid)
+            # Pass class ID — controller looks up exact grid position directly
+            # pixel coords passed as fallback (not used if class is in grid)
+            loteria_bot_controller.drop_bean(cls, pixel_x=x_mid, pixel_y=y_mid)
             log("WORKER", f"✅ Drop complete for class {cls}. Robot parked.")
         except Exception as e:
             log("WORKER", f"❌ Drop FAILED for class {cls}: {e}")
@@ -52,8 +53,7 @@ def drop_worker():
             green_cards.add(cls)
             queued_cards.discard(cls)
 
-        remaining = drop_queue.qsize()
-        log("WORKER", f"Cards done: {len(green_cards)} | Remaining in queue: {remaining}")
+        log("WORKER", f"Cards done: {len(green_cards)} | Remaining in queue: {drop_queue.qsize()}")
         drop_queue.task_done()
 
 
@@ -71,45 +71,53 @@ def coordinate_objects(results, frame, shared_classes=None):
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 x_mid = int((x1 + x2) / 2)
                 y_mid = int((y1 + y2) / 2)
-                cls = int(box.cls[0].item())
+                cls   = int(box.cls[0].item())
 
                 detected_classes.add(cls)
 
+                # Skip tabla overlay classes
                 if cls not in tablas:
                     with queue_lock:
-                        already_done    = cls in green_cards
-                        already_queued  = cls in queued_cards
-                        is_match        = (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA
+                        already_done   = cls in green_cards
+                        already_queued = cls in queued_cards
+                        is_match       = (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA
 
                     if already_done:
-                        color = (0, 255, 0)     # Green  — bean already dropped
+                        color = (0, 255, 0)     # Green  — bean dropped
 
                     elif already_queued:
-                        color = (0, 255, 255)   # Yellow — queued, robot en route
+                        color = (0, 255, 255)   # Yellow — queued
 
                     elif is_match:
-                        color = (0, 165, 255)   # Orange — new match, queuing now
-                        with queue_lock:
-                            queued_cards.add(cls)
-                        drop_queue.put((cls, x_mid, y_mid))
-                        log("VISION", f"🎯 MATCH! Class {cls} queued at ({x_mid}, {y_mid}) — queue size: {drop_queue.qsize()}")
+                        color = (0, 165, 255)   # Orange — new match
+
+                        # Check if this class is in the known grid before queuing
+                        if cls in loteria_bot_controller.CARD_GRID:
+                            with queue_lock:
+                                queued_cards.add(cls)
+                            drop_queue.put((cls, x_mid, y_mid))
+                            row, col = loteria_bot_controller.CARD_GRID[cls]
+                            log("VISION", f"🎯 MATCH! Class {cls} @ grid ({row},{col}) — queue: {drop_queue.qsize()}")
+                        else:
+                            log("VISION", f"⚠️  Class {cls} matched but not in grid map — skipping.")
 
                     else:
-                        color = (0, 0, 255)     # Red    — only one camera sees it
+                        color = (0, 0, 255)     # Red    — one camera only
 
                     cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
-                    cv2.putText(
-                        frame,
-                        f"cls:{cls} ({x_mid},{y_mid})",
-                        (x_mid + 10, y_mid),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.45,
-                        color,
-                        1,
-                    )
+
+                    # Show class name from grid if available
+                    label = f"cls:{cls}"
+                    if cls in loteria_bot_controller.CARD_GRID:
+                        r, c = loteria_bot_controller.CARD_GRID[cls]
+                        label = f"{cls} ({r},{c})"
+
+                    cv2.putText(frame, label, (x_mid + 10, y_mid),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
 
     if len(green_cards) >= total_cards:
-        cv2.putText(frame, "LOTERIA!", (80, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        cv2.putText(frame, "LOTERIA!", (80, 100),
+                    cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
 
     return detected_classes
 
@@ -125,16 +133,13 @@ def testing_middle_dot():
     )
     log("SETUP", f"Using device: {device}")
 
-    # verbose=False suppresses YOLO's own per-frame console output
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt", verbose=False)
     model.to(device)
     log("SETUP", "YOLO model loaded.")
 
-    # Start drop worker
     threading.Thread(target=drop_worker, daemon=True).start()
     log("SETUP", "Drop worker thread started.")
 
-    # Open cameras
     cap0 = cv2.VideoCapture(8)
     cap1 = cv2.VideoCapture(10)
     log("SETUP", f"Camera 8  open: {cap0.isOpened()}")
@@ -151,7 +156,6 @@ def testing_middle_dot():
     running     = True
     skip_frames = 2
 
-    # ------------------------------------------------------------------
     def capture_process(cap, camera_id):
         nonlocal running
         frame_count          = 0
@@ -164,7 +168,7 @@ def testing_middle_dot():
             if not ret:
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_FAILURES:
-                    log("CAM", f"❌ Camera {camera_id} lost after {MAX_FAILURES} failures. Stopping.")
+                    log("CAM", f"❌ Camera {camera_id} lost. Stopping.")
                     break
                 time.sleep(0.1)
                 continue
@@ -176,7 +180,6 @@ def testing_middle_dot():
                 continue
 
             try:
-                # verbose=False suppresses per-inference prints
                 results = model(frame, conf=0.50, imgsz=320, verbose=False)
                 annotated_frame = results[0].plot()
 
@@ -191,10 +194,9 @@ def testing_middle_dot():
                     camera_class_ids[camera_id] = detected_classes
 
             except Exception as e:
-                log("CAM", f"Camera {camera_id} processing error: {e}")
+                log("CAM", f"Camera {camera_id} error: {e}")
 
             time.sleep(0.001)
-    # ------------------------------------------------------------------
 
     threads = []
     if cap0.isOpened():
@@ -224,7 +226,8 @@ def testing_middle_dot():
                     queued = drop_queue.qsize()
 
                 status = f"Done: {done}/16 | Queued: {queued}"
-                cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, status, (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.imshow(f"Camera {camera_id}", frame)
 
             key = cv2.waitKey(10) & 0xFF

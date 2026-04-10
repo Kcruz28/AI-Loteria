@@ -24,6 +24,13 @@ MACHINE_MAX_X =  0.0
 MACHINE_MIN_Y =  0.0
 MACHINE_MAX_Y =  3.0
 
+# --- SERVO SETTINGS ---
+# Most GRBL servos use a 0-1000 scale ($30 setting).
+# Standard servos want a pulse between S40 and S140.
+SERVO_OPEN  = 140   # Max rotation for the drop
+SERVO_CLOSE = 40    # Idle/closed position
+# ----------------------
+
 # Calibration file — stores confirmed measured positions per card
 CALIBRATION_FILE = "calibration.json"
 
@@ -381,10 +388,10 @@ def drop_bean(cls_id, pixel_x=None, pixel_y=None):
         # Drop bean
         send_gcode("G4 P1.0")
         time.sleep(1.0)
-        print(f"[CNC] 👇 Dropping bean...")
-        send_gcode("M3 S90")
-        time.sleep(0.5)
-        send_gcode("M3 S0")
+        print(f"[CNC] 👇 Dropping bean (S{SERVO_OPEN})...")
+        send_gcode(f"M3 S{SERVO_OPEN}")
+        time.sleep(0.8) # Wait for servo to reach full position
+        send_gcode(f"M3 S{SERVO_CLOSE}")
 
         # Park
         print(f"[CNC] 🅿️  Parking...")
@@ -439,9 +446,10 @@ if __name__ == "__main__":
                 send_gcode("G90")
                 break
             elif cmd == 'SERVO':
-                send_gcode("M3 S90")
-                time.sleep(0.5)
-                send_gcode("M3 S0")
+                print(f"[CNC] Servo Test: Open (S{SERVO_OPEN}) then Close (S{SERVO_CLOSE})")
+                send_gcode(f"M3 S{SERVO_OPEN}")
+                time.sleep(0.8)
+                send_gcode(f"M3 S{SERVO_CLOSE}")
             elif cmd == 'ORIGIN':
                 send_gcode("G90")
                 send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}")

@@ -1,14 +1,21 @@
 import cv2
 import time
 import torch
+import threading
 from ultralytics import YOLO
 import loteria_bot_controller
 
-CAMERA_INDEX = 8
+CAMERA_INDEX = 0
 
 JOG_STEPS  = [0.05, 0.1, 0.2, 0.5]
 JOG_LABELS = ["fine 0.05", "medium 0.1", "coarse 0.2", "large 0.5"]
 jog_idx    = 1
+
+# Shared between camera thread and main display loop
+latest_frame      = None
+latest_detections = []  # list of (x1, y1, x2, y2, cx, cy, name)
+frame_lock        = threading.Lock()
+running           = True
 
 
 def get_pos_string():
@@ -18,37 +25,61 @@ def get_pos_string():
     return "pos unknown"
 
 
-def run_detection(model, frame):
-    """Run YOLO and draw card boxes + center dots on frame."""
-    results = model(frame, conf=0.45, imgsz=320, verbose=False)
-    for r in results:
-        if r.boxes is None:
-            continue
-        for box in r.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
-            cls  = int(box.cls[0].item())
-            cx   = (x1 + x2) // 2
-            cy   = (y1 + y2) // 2
-            name = loteria_bot_controller.CARD_NAMES.get(cls, f"cls:{cls}")
+def camera_thread(cap, model):
+    """Runs in background — grabs frames, runs YOLO, stores results."""
+    global latest_frame, latest_detections, running
 
-            if cls in loteria_bot_controller.CARD_GRID:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 200, 255), 1)
-                cv2.circle(frame, (cx, cy), 6, (0, 200, 255), -1)
-                cv2.putText(frame, name, (x1, y1 - 6),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 200, 255), 1)
+    skip = 0
+    while running:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(0.05)
+            continue
+
+        skip += 1
+        detections = []
+
+        # Run YOLO every 2 frames
+        if skip % 2 == 0:
+            results = model(frame, conf=0.45, imgsz=320, verbose=False)
+            for r in results:
+                if r.boxes is None:
+                    continue
+                for box in r.boxes:
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    cls  = int(box.cls[0].item())
+                    cx   = (x1 + x2) // 2
+                    cy   = (y1 + y2) // 2
+                    name = loteria_bot_controller.CARD_NAMES.get(cls, None)
+                    if cls in loteria_bot_controller.CARD_GRID and name:
+                        detections.append((x1, y1, x2, y2, cx, cy, name))
+
+        with frame_lock:
+            latest_frame = frame.copy()
+            if detections:  # only update if we got new results
+                latest_detections = detections
+
+        time.sleep(0.001)
+
+
+def draw_detections(frame, detections):
+    for (x1, y1, x2, y2, cx, cy, name) in detections:
+        cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.circle(frame, (cx, cy), 6, (0, 255, 0), -1)
+        cv2.putText(frame, name, (x1, y1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
     return frame
 
 
-def draw_status(frame, jog_idx, status_msg):
-    """Single status line at top — step size and last action only."""
+def draw_status(frame, status_msg):
     label = JOG_LABELS[jog_idx]
     cv2.putText(frame, f"Step: {label}  |  {status_msg}",
-                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 0), 2)
+                (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
     return frame
 
 
 def main():
-    global jog_idx
+    global jog_idx, running
 
     print("\n[app4] Manual CNC Control + Card Detection")
     print("[app4] WASD=move  SPACE=drop  O=origin  Z=zero  P=pos  +/-=step  Q=quit\n")
@@ -69,26 +100,28 @@ def main():
     for _ in range(5):
         cap.read()
 
-    status_msg  = f"Ready — {get_pos_string()}"
-    frame_count = 0
+    # Start background camera + detection thread
+    t = threading.Thread(target=camera_thread, args=(cap, model), daemon=True)
+    t.start()
 
+    status_msg = f"Ready — {get_pos_string()}"
     cv2.namedWindow("app4")
     print(f"[app4] {status_msg}")
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            print("[app4] Camera read failed.")
-            break
+    while running:
+        # Grab latest frame and detections from background thread
+        with frame_lock:
+            if latest_frame is None:
+                time.sleep(0.01)
+                continue
+            frame      = latest_frame.copy()
+            detections = list(latest_detections)
 
-        frame_count += 1
-        if frame_count % 3 == 0:
-            frame = run_detection(model, frame)
-
-        frame = draw_status(frame, jog_idx, status_msg)
+        frame = draw_detections(frame, detections)
+        frame = draw_status(frame, status_msg)
         cv2.imshow("app4", frame)
 
-        key = cv2.waitKey(30) & 0xFF
+        key = cv2.waitKey(10) & 0xFF
 
         if key == 255:
             continue
@@ -152,10 +185,12 @@ def main():
 
         elif key == ord('q') or key == ord('Q') or key == 27:
             print("[app4] Quitting...")
+            running = False
             break
 
     cap.release()
     cv2.destroyAllWindows()
+    t.join(timeout=1.0)
     print("[app4] Done.")
 
 

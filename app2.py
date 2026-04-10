@@ -106,21 +106,22 @@ def testing_middle_dot():
     model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")  # for .pt
     model.to(device)  # for .pt
 
+    # -------------------------------------------------------------
+    # CAMERA FIX FOR RASPBERRY PI WITH TWO USB CAMERAS
+    # USB Camera #1 is always 0. 
+    # USB Camera #2 is always 2. (Index 1 is taken by Camera #1's metadata/audio).
+    # -------------------------------------------------------------
     cap0 = cv2.VideoCapture(0)
-    cap1 = cv2.VideoCapture(1)
+    cap1 = cv2.VideoCapture(2)
         
-    if not cap1.isOpened():
-        print("❌ Only 1 camera found. Set TEST_MODE_SINGLE_CAMERA = True to test.")
-        cap1 = None
-        
-    print(f"Camera 0 open: {cap0.isOpened()}")
-    print(f"Camera 1 open: {cap1 is not None and cap1.isOpened()}")
+    print(f"Camera 1 (Index 0) open: {cap0.isOpened()}")
+    print(f"Camera 2 (Index 2) open: {cap1.isOpened()}")
 
     #  reduce resolution for better performance
-    if cap0 is not None and cap0.isOpened():
+    if cap0.isOpened():
         cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    if cap1 is not None and cap1.isOpened():
+    if cap1.isOpened():
         cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -174,7 +175,7 @@ def testing_middle_dot():
     threads = []
     if cap0.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
-    if cap1 is not None and cap1.isOpened():
+    if cap1.isOpened():
         threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
 
     for thread in threads:
@@ -228,9 +229,9 @@ def testing_middle_dot():
         for thread in threads:
             thread.join(timeout=1.0)
 
-        if cap0 is not None:
+        if cap0.isOpened():
             cap0.release()
-        if cap1 is not None:
+        if cap1.isOpened():
             cap1.release()
         cv2.destroyAllWindows()
 

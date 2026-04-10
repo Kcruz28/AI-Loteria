@@ -107,7 +107,24 @@ def testing_middle_dot():
     model.to(device)  # for .pt
 
     cap0 = cv2.VideoCapture(0)
-    cap1 = cv2.VideoCapture(1)
+    
+    # USB cameras claim multiple slots unpredictably on Linux (0, 2, 4).
+    # This quietly tests the most common secondary slots without triggering errors!
+    cap1 = None
+    for test_idx in [1, 2, 4]:
+        temp = cv2.VideoCapture(test_idx)
+        if temp.isOpened():
+            ret, _ = temp.read()
+            if ret:
+                cap1 = temp
+                print(f"✅ SECURED CAMERA 2 AT INDEX: {test_idx}")
+                break
+        temp.release()
+        
+    if cap1 is None:
+        print("❌ ERROR: Could not find ANY secondary camera at indexes 1, 2, or 4!")
+        # Fallback to dummy so script doesn't crash, but it won't pop a window
+        cap1 = cv2.VideoCapture(-1) 
 
     #  reduce resolution for better performance
     cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)

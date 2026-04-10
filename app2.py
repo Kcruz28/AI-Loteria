@@ -117,11 +117,14 @@ def testing_middle_dot():
     print(f"Camera 1 (Index 0) open: {cap0.isOpened()}")
     print(f"Camera 2 (Index 2) open: {cap1.isOpened()}")
 
-    #  reduce resolution for better performance
+    #  reduce resolution for better performance AND enforce MJPG compression 
+    #  to prevent the Raspberry Pi USB hub from bandwidth-crashing!
     if cap0.isOpened():
+        cap0.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap0.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap0.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     if cap1.isOpened():
+        cap1.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
         cap1.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap1.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
@@ -137,11 +140,19 @@ def testing_middle_dot():
         nonlocal running
         frame_count = 0
 
+        consecutive_fails = 0
+
         while running and cap.isOpened():
             ret, frame = cap.read()
             if not ret:
-                print(f"Lost connection to Camera {camera_id}")
-                break
+                consecutive_fails += 1
+                if consecutive_fails > 10:
+                    print(f"❌ Lost connection to Camera {camera_id} (Too many dropped frames)")
+                    break
+                time.sleep(0.1)
+                continue
+            
+            consecutive_fails = 0
 
             frame_count += 1
             if frame_count % skip_frames != 0:

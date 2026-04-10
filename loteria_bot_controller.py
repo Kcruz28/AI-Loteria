@@ -11,33 +11,31 @@ import serial.tools.list_ports
 # 1. SETUP & CONFIGURATION
 # ==============================================================================
 
-# Movement Speeds (mm/min). Using G1 instead of G0 allows speed control.
-# X is heavy, so we limit the feed rate to prevent motor stutter/skipping steps.
 SPEED_X = 100
 SPEED_Y = 100
 
-# Safe Origin / Parking Coordinates
-ORIGIN_X = 0      # fully left
-ORIGIN_Y = -0.1   # slight offset to park UP without hitting the frame
+# Parking position — top-right corner, where gantry starts
+ORIGIN_X = 0
+ORIGIN_Y = 0
 
-# Invert Axes Configuration (Change 1 to -1 to reverse the physical movement polarity)
-# If positive X moves the motor LEFT (wrong way), setting MULTIPLIER_X to -1 sends negative coordinates to fix it!
-MULTIPLIER_X = 1
-MULTIPLIER_Y = -1
+# Camera index — must match app2.py
+CAMERA_INDEX = 8
 
-# Hardware connections
-# Auto-detect the USB serial port for the GRBL Arduino
-def emergency_stop():
-    global grbl
-    print("\n\n[CNC] 🛑 TRIGGERING EMERGENCY STOP TO MOTORS! 🛑")
-    if grbl is not None:
-        try:
-            grbl.write(b'!') # GRBL Feed Hold (Stop instantly)
-            time.sleep(0.1)
-            grbl.write(b'\x18') # GRBL Soft Reset (Clear memory)
-            print("[CNC] 🛑 Robot halted.")
-        except Exception as e:
-            print(f"Failed to send stop command: {e}")
+# Machine travel limits in GRBL units
+# Origin (0, 0) = top-right corner of board (where gantry parks)
+# X goes negative to reach the left side of the board
+# Y goes positive to reach the bottom of the board
+MACHINE_MIN_X = -6.0
+MACHINE_MAX_X =  0.0
+MACHINE_MIN_Y =  0.0
+MACHINE_MAX_Y =  3.0
+
+# Calibration file
+CALIBRATION_FILE = "calibration.json"
+
+# ==============================================================================
+# GRBL CONNECTION
+# ==============================================================================
 
 def connect_grbl():
     ports = serial.tools.list_ports.comports()
@@ -49,391 +47,375 @@ def connect_grbl():
                 s.write(b"\r\n\r\n")
                 time.sleep(2)
                 s.flushInput()
-                
-                # ENFORCE CRITICAL STARTUP CONFIG
-                s.write(b"G21\n") # Force Millimeters (Prevents inch-scaling bugs)
+                s.write(b"G21\n")  # Force millimeters
                 time.sleep(0.1)
-                
                 print(f"[SETUP] -> Successfully connected to GRBL on {port.device}!")
                 return s
             except Exception as e:
-                print(f"[SETUP] -> Failed to connect on {port.device}: {e}")
-    
-    print("[SETUP] -> No suitable GRBL device found. Will run in SIMULATED mode.")
+                print(f"[SETUP] -> Failed on {port.device}: {e}")
+    print("[SETUP] -> No GRBL device found. Running in SIMULATED mode.")
     return None
 
 grbl = connect_grbl()
-robot_lock = threading.Lock() # Ensures only one command accesses the robot at a time
+robot_lock = threading.Lock()
 
-# Calibration file path
-CALIBRATION_FILE = "homography_matrix.json"
+
+def emergency_stop():
+    global grbl
+    print("\n\n[CNC] 🛑 TRIGGERING EMERGENCY STOP TO MOTORS! 🛑")
+    if grbl is not None:
+        try:
+            grbl.write(b'!')
+            time.sleep(0.1)
+            grbl.write(b'\x18')
+            print("[CNC] 🛑 Robot halted.")
+        except Exception as e:
+            print(f"Failed to send stop command: {e}")
+
 
 # ==============================================================================
-# 2. HOMOGRAPHY CALIBRATION (PIXEL TO MM)
+# 2. CALIBRATION
+# ==============================================================================
+#
+# The board corners map to machine coordinates like this:
+#
+#   Camera view (what you see overhead):
+#
+#   Top-Left -------- Top-Right
+#      |                  |
+#      |   LOTERIA BOARD  |
+#      |                  |
+#   Bot-Left -------- Bot-Right
+#
+#   Machine coordinates:
+#   Top-Left     = X=-6, Y=0   (far left,  top)
+#   Top-Right    = X= 0, Y=0   (origin,    top)    ← gantry parks here
+#   Bottom-Right = X= 0, Y=3   (origin,    bottom)
+#   Bottom-Left  = X=-6, Y=3   (far left,  bottom)
+#
+# During calibration, click the corners ON CAMERA in this exact order:
+#   1. Top-Left
+#   2. Top-Right
+#   3. Bottom-Right
+#   4. Bottom-Left
+#
 # ==============================================================================
 
-def calibrate_homography():
-    """
-    Run this function ONCE to map the camera pixels to the physical board.
-    You will need to manually jog the CNC to 4 corners and find their pixels.
-    """
-    print("--- HOMOGRAPHY CALIBRATION ---")
-    print("We need to map 4 points from the Camera (Pixels) to the Gantry (Millimeters).")
-    
-    # 1. Physical Coordinates (Where the CNC actually is in mm)
-    # Example: A typical Loteria Board is roughly 150mm x 240mm.
-    # Format: [X_unit, Y_unit]
-    physical_pts = np.array([
-        [0, 0],         # Top-Left corner of board
-        [6, 0],         # Top-Right corner
-        [6, 3],         # Bottom-Right corner
-        [0, 3]          # Bottom-Left corner
-    ], dtype=np.float32)
+def calibrate():
+    print("\n===== CALIBRATION =====")
+    print(f"Opening camera {CAMERA_INDEX}...")
+    print("")
+    print("Click the 4 corners of the Loteria board in this order:")
+    print("  1. TOP-LEFT     (machine: X=-6, Y=0)")
+    print("  2. TOP-RIGHT    (machine: X= 0, Y=0)  ← where gantry parks")
+    print("  3. BOTTOM-RIGHT (machine: X= 0, Y=3)")
+    print("  4. BOTTOM-LEFT  (machine: X=-6, Y=3)")
+    print("")
+    print("Press 'q' to cancel.\n")
 
-    # 2. Pixel Coordinates (Camera click calibration)
-    print("\nOpening camera for calibration...")
-    cam_choice = input("Press ENTER to use Camera 0, or type '1' for Camera 1: ")
-    cam_id = 1 if cam_choice.strip() == '1' else 0
-    cap = cv2.VideoCapture(cam_id)
-    
+    cap = cv2.VideoCapture(CAMERA_INDEX)
     if not cap.isOpened():
-        print("❌ Could not open camera. Check connection.")
-        return None
-        
-    pixel_pts = []
-    def click_event(event, x, y, flags, params):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            if len(pixel_pts) < 4:
-                pixel_pts.append([x, y])
-                print(f"🎯 Captured point {len(pixel_pts)}/4 at ({x}, {y})")
+        print(f"❌ Could not open camera {CAMERA_INDEX}.")
+        return
 
-    win_name = 'Calibration - Click the 4 corners'
-    cv2.namedWindow(win_name)
-    cv2.setMouseCallback(win_name, click_event)
-    
-    print("\n===== INSTRUCTIONS =====")
-    print("Click the 4 corners of your game board on the video feed.")
-    print("Do it in this EXACT order:")
-    print("  1. Top-Left corner (0,0)")
-    print("  2. Top-Right corner")
-    print("  3. Bottom-Right corner")
-    print("  4. Bottom-Left corner")
-    print("Press 'q' to cancel.")
-    print("========================\n")
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+    pixel_pts = []
+    labels = [
+        "1: Top-Left     (X=-6, Y=0)",
+        "2: Top-Right    (X= 0, Y=0)",
+        "3: Bottom-Right (X= 0, Y=3)",
+        "4: Bottom-Left  (X=-6, Y=3)",
+    ]
+    short_labels = ["1:TL", "2:TR", "3:BR", "4:BL"]
+
+    def click_event(event, x, y, flags, params):
+        if event == cv2.EVENT_LBUTTONDOWN and len(pixel_pts) < 4:
+            pixel_pts.append([x, y])
+            print(f"  ✅ Point {len(pixel_pts)}/4 — {labels[len(pixel_pts)-1]} — pixel ({x}, {y})")
+
+    win = "Calibration — click 4 corners in order"
+    cv2.namedWindow(win)
+    cv2.setMouseCallback(win, click_event)
 
     while True:
         ret, frame = cap.read()
         if not ret:
             break
-            
-        for idx, pt in enumerate(pixel_pts):
-            cv2.circle(frame, (int(pt[0]), int(pt[1])), 6, (0, 0, 255), -1)
-            cv2.putText(frame, str(idx + 1), (int(pt[0]) + 10, int(pt[1]) - 10), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
-                        
-        cv2.imshow(win_name, frame)
-        
+
+        for i, pt in enumerate(pixel_pts):
+            cv2.circle(frame, (pt[0], pt[1]), 8, (0, 0, 255), -1)
+            cv2.putText(frame, short_labels[i], (pt[0] + 10, pt[1] - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+        if len(pixel_pts) < 4:
+            instruction = f"Click: {labels[len(pixel_pts)]}"
+            cv2.putText(frame, instruction, (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        else:
+            cv2.putText(frame, "All 4 points captured! Saving...",
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        cv2.imshow(win, frame)
+
         if len(pixel_pts) == 4:
-            print("\nAll 4 points captured, calculating matrix...")
-            cv2.waitKey(1000)
+            cv2.waitKey(1500)
             break
-            
+
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
-            
+
     cap.release()
     cv2.destroyAllWindows()
-    
+
     if len(pixel_pts) != 4:
         print("❌ Calibration cancelled.")
-        return None
+        return
 
-    pixel_pts_arr = np.array(pixel_pts, dtype=np.float32)
-    matrix, _ = cv2.findHomography(pixel_pts_arr, physical_pts)
-
+    data = {"corners": pixel_pts}
     with open(CALIBRATION_FILE, 'w') as f:
-        json.dump(matrix.tolist(), f)
-    
-    print(f"✅ Calibration successful! Saved to {CALIBRATION_FILE}")
-    return matrix
+        json.dump(data, f, indent=2)
+
+    print(f"\n✅ Calibration saved to {CALIBRATION_FILE}")
+    print(f"   1. Top-Left     pixel: {pixel_pts[0]}  → machine (-6.0,  0.0)")
+    print(f"   2. Top-Right    pixel: {pixel_pts[1]}  → machine ( 0.0,  0.0)")
+    print(f"   3. Bottom-Right pixel: {pixel_pts[2]}  → machine ( 0.0,  3.0)")
+    print(f"   4. Bottom-Left  pixel: {pixel_pts[3]}  → machine (-6.0,  3.0)")
 
 
 def load_calibration():
-    """
-    Loads the homography matrix from the JSON file.
-    """
     if not os.path.exists(CALIBRATION_FILE):
-        print("Calibration file not found. You must run calibrate_homography() first!")
+        print(f"❌ '{CALIBRATION_FILE}' not found. Run option 1 (Calibration) first.")
         return None
-        
     with open(CALIBRATION_FILE, 'r') as f:
-        matrix_list = json.load(f)
-        return np.array(matrix_list, dtype=np.float32)
+        data = json.load(f)
+    return data["corners"]
+
 
 # ==============================================================================
-# 3. GANTRY CONTROL & MATH
+# 3. PIXEL → MACHINE COORDINATE (bilinear interpolation)
+# ==============================================================================
+
+def pixel_to_machine(px, py, corners):
+    """
+    Converts a camera pixel (px, py) to machine coordinates (mx, my)
+    using bilinear interpolation across the 4 calibrated corners.
+
+    corners order: [top_left, top_right, bottom_right, bottom_left]
+
+    Machine coords:
+      top_left     → (-6,  0)
+      top_right    → ( 0,  0)
+      bottom_right → ( 0,  3)
+      bottom_left  → (-6,  3)
+    """
+    tl = np.array(corners[0], dtype=np.float32)
+    tr = np.array(corners[1], dtype=np.float32)
+    br = np.array(corners[2], dtype=np.float32)
+    bl = np.array(corners[3], dtype=np.float32)
+
+    # Compute v (0=top, 1=bottom) from left and right edge Y spans
+    left_span  = bl[1] - tl[1]
+    right_span = br[1] - tr[1]
+
+    v_left  = (py - tl[1]) / left_span  if left_span  > 0 else 0.5
+    v_right = (py - tr[1]) / right_span if right_span > 0 else 0.5
+    v = (v_left + v_right) / 2.0
+    v = max(0.0, min(1.0, v))  # clamp
+
+    # Interpolate left and right X boundaries at this v
+    left_x  = tl[0] + v * (bl[0] - tl[0])
+    right_x = tr[0] + v * (br[0] - tr[0])
+
+    # Compute u (0=left, 1=right)
+    x_span = right_x - left_x
+    u = (px - left_x) / x_span if x_span > 0 else 0.5
+    u = max(0.0, min(1.0, u))  # clamp
+
+    # Map u, v → machine coordinates
+    mx = MACHINE_MIN_X + u * (MACHINE_MAX_X - MACHINE_MIN_X)
+    my = MACHINE_MIN_Y + v * (MACHINE_MAX_Y - MACHINE_MIN_Y)
+
+    return round(mx, 2), round(my, 2)
+
+
+# ==============================================================================
+# 4. GCODE SENDER
 # ==============================================================================
 
 def send_gcode(cmd):
-    """
-    Sends a G-code command to the GRBL controller via serial
-    and waits for the 'ok' response.
-    """
-    print(f"\n[CNC] --> Sending: {cmd}")
+    print(f"[CNC] --> {cmd}")
     if grbl is None:
-        print(f"[CNC] <-- [SIMULATED SUCCESS, waiting for 'ok']")
-        time.sleep(0.5) # Fake movement delay
+        print(f"[CNC] <-- [SIMULATED ok]")
+        time.sleep(0.3)
         return
-        
+
     try:
         grbl.write((cmd + '\n').encode())
         timeout_counter = 0
         while True:
             line = grbl.readline().decode('utf-8').strip()
             if line:
-                print(f"[CNC] <-- Received: {line}")
-                timeout_counter = 0 # reset on valid data
+                print(f"[CNC] <-- {line}")
+                timeout_counter = 0
                 if 'ok' in line.lower():
                     break
                 if 'error' in line.lower():
-                    print(f"[CNC] !!! GRBL EXCEPTION CAUGHT !!!")
+                    print(f"[CNC] !!! GRBL ERROR !!!")
                     break
             else:
                 timeout_counter += 1
-                if timeout_counter >= 3: # 3 empty reads = 3 seconds hung/frozen
-                    print("\n" + "!"*60)
-                    print("[CNC] ⚠️ CRITICAL: Arduino stopped responding to serial commands!")
-                    print("-> Why? The Arduino received a command but never said 'ok'.")
-                    print("-> Fix: Press the physical 'RESET' button on the board or unplug the USB.")
-                    print("!"*60 + "\n")
+                if timeout_counter >= 3:
+                    print("[CNC] ⚠️  Arduino stopped responding. Try resetting it.")
                     break
     except KeyboardInterrupt:
-        print("\n\n[CNC] 🛑 EMERGENCY STOP DETECTED! (Ctrl+C pressed) 🛑")
-        grbl.write(b'!') # GRBL Feed Hold (Stop instantly)
+        print("\n[CNC] 🛑 EMERGENCY STOP (Ctrl+C)")
+        grbl.write(b'!')
         time.sleep(0.1)
-        grbl.write(b'\x18') # GRBL Soft Reset (Clear memory)
-        print("[CNC] 🛑 Sent INSTANT HALT command to motors! Shutting down script...\n")
+        grbl.write(b'\x18')
         import sys
         sys.exit(1)
     except Exception as e:
-        print(f"[CNC] !!! SERIAL RUNTIME ERROR: {e}")
+        print(f"[CNC] Serial error: {e}")
 
 
-def pixel_to_mm(pixel_x, pixel_y, transform_matrix):
-    """
-    Uses the homography matrix to convert a camera pixel to physical mm.
-    """
-    # math magic requires a 3D vector for perspective transform
-    # Convert point to homogeneous coordinates [x, y, 1]
-    point = np.array([[[pixel_x, pixel_y]]], dtype=np.float32)
-    
-    # Apply transformation
-    transformed = cv2.perspectiveTransform(point, transform_matrix)
-    
-    # Extract physical X and Y
-    target_x = transformed[0][0][0]
-    target_y = transformed[0][0][1]
-    
-    return target_x, target_y
-
+# ==============================================================================
+# 5. DROP BEAN — called by app2.py drop worker
+# ==============================================================================
 
 def drop_bean(pixel_x, pixel_y):
-    """
-    Reads the calibration, calculates the exact mm, and drops the bean.
-    """
     with robot_lock:
-        print(f"\n[{time.strftime('%H:%M:%S')}] *** INITIATING ROBOT DROP SEQUENCE ***")
-        matrix = load_calibration()
-        if matrix is None:
+        print(f"\n[CNC] *** DROP SEQUENCE — pixel ({pixel_x}, {pixel_y}) ***")
+
+        corners = load_calibration()
+        if corners is None:
             return
 
-    # 1. Do the Math
-    target_x, target_y = pixel_to_mm(pixel_x, pixel_y, matrix)
+        mx, my = pixel_to_machine(pixel_x, pixel_y, corners)
+        print(f"[CNC] Pixel ({pixel_x}, {pixel_y}) → Machine (X:{mx}, Y:{my})")
 
-    # Multiply coordinates depending on which way the CNC considers "positive"
-    # Usually X+ is LEFT and Y+ is UP on some CNCs.
-    target_x = target_x * getattr(globals(), "MULTIPLIER_X", -1)
-    target_y = target_y * getattr(globals(), "MULTIPLIER_Y", 1)
-    
-    # Round to 2 decimal places for GCODE
-    target_x = round(target_x, 2)
-    target_y = round(target_y, 2)
-    
-    print(f"\nMatch found at pixel ({pixel_x}, {pixel_y})!")
-    print(f"Transformed to Physical Board: X:{target_x}mm, Y:{target_y}mm")
-    
-    # 2. Add safety limits (prevent crashing the CNC)
-    # Applying the computational machine bounds (6 units = 380mm, 3 units = 250mm)
-    MAX_X = 6
-    MIN_X = -6
-    
-    MAX_Y = 3
-    MIN_Y = -3
-    
-    # Check boundaries using the new constraints
-    if target_x < MIN_X or target_x > MAX_X or target_y < MIN_Y or target_y > MAX_Y:
-         print("\n" + "!"*40)
-         print(f"🛑 🛑 MOVE BLOCKED: OUT OF BOUNDS! 🛑 🛑")
-         print(f"Computed Coordinate ({target_x}, {target_y}) is beyond limits.")
-         print(f"Allowed X: [{MIN_X} to {MAX_X}], Allowed Y: [{MIN_Y} to {MAX_Y}]")
-         print("-> Move aborted to prevent hardware crash!")
-         print("!"*40 + "\n")
-         return  # <--- ENABLED bounds enforcement to prevent moving out of bounds
+        # Safety bounds check
+        if not (MACHINE_MIN_X <= mx <= MACHINE_MAX_X and MACHINE_MIN_Y <= my <= MACHINE_MAX_Y):
+            print(f"[CNC] 🛑 OUT OF BOUNDS: ({mx}, {my}) — move blocked.")
+            return
 
-    # 3. Move the CNC (Sequentially)
-    print("\n=======================================================")
-    print(f"[CNC] 🚗 MOVING SEQUENTIALLY TO X-Axis: {target_x} mm, then Y-Axis: {target_y} mm...")
-    print("=======================================================")
-    send_gcode("G90") # Ensure Absolute Mode before executing coordinates
-    send_gcode(f"G1 X{target_x} F{SPEED_X}") # Move X axis first
-    send_gcode(f"G1 Y{target_y} F{SPEED_Y}") # Then move Y axis slower
-    
-    # Wait 2 seconds at the target location before dropping the bean!
-    print(f"[CNC] ⏳ Waiting 2 seconds at location before dropping...")
-    send_gcode("G4 P2.0") # GRBL Dwell command - forces the machine to wait
-    time.sleep(2)         # Python pause to keep the queue in sync
-    
-    # 4. Activate Servo (Using M3 Spindle command in GRBL)
-    print(f"[CNC] 👇 DROPPING BEAN AT ({target_x}, {target_y})...")
-    send_gcode("M3 S90") # Servo Drop
-    time.sleep(0.5)
-    send_gcode("M3 S0")  # Servo Reset
-    
-    # 5. MOVE TO PARK (Origin)
-    print(f"Parking gantry at safe origin (X:{ORIGIN_X}, Y:{ORIGIN_Y})...")
-    send_gcode("G90") # Ensure Absolute Mode for parking
-    send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}") # Park Y axis first
-    send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}") # Park X axis second 
+        # Move to target
+        send_gcode("G90")                          # Absolute mode
+        send_gcode(f"G1 X{mx} F{SPEED_X}")        # Move X first
+        send_gcode(f"G1 Y{my} F{SPEED_Y}")        # Then Y
+        send_gcode("G4 P1.5")                     # Dwell 1.5s to stabilize
+        time.sleep(1.5)
 
+        # Drop bean
+        print(f"[CNC] 👇 Dropping bean at (X:{mx}, Y:{my})...")
+        send_gcode("M3 S90")
+        time.sleep(0.5)
+        send_gcode("M3 S0")
+
+        # Park back at origin
+        print(f"[CNC] 🅿️  Parking at origin (0, 0)...")
+        send_gcode("G90")
+        send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}")  # Y first to avoid collision
+        send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}")  # Then X
+        print(f"[CNC] ✅ Drop sequence complete.")
+
+
+# ==============================================================================
+# 6. MAIN CLI
+# ==============================================================================
 
 if __name__ == "__main__":
-    # If you run this script directly, trigger the calibration wizard
-    print("Loteria CNC Bot Controller")
+    print("\nLoteria CNC Bot Controller")
     print("1. Run Calibration")
-    print("2. Test Drop Bean")
-    print("3. Manual Motor Jogging (Test Individual Axis)")
-    choice = input("Select an option: ")
-    
+    print("2. Test Drop Bean (by pixel)")
+    print("3. Manual Motor Jogging")
+    choice = input("Select an option: ").strip()
+
     if choice == "1":
-        calibrate_homography()
+        calibrate()
+
     elif choice == "2":
-        print("-------------------------------------------")
-        print("Test a bean drop manually WITHOUT the YOLO active.")
-        print("You type exactly which camera pixel (X, Y) to navigate to.")
+        print("Enter a pixel coordinate to test the full drop sequence.")
         try:
-            x = float(input("Enter test X pixel (e.g. 300): "))
-            y = float(input("Enter test Y pixel (e.g. 200): "))
+            x = float(input("X pixel (e.g. 320): "))
+            y = float(input("Y pixel (e.g. 240): "))
             drop_bean(x, y)
         except ValueError:
-            print("Please enter valid numbers.")
+            print("Invalid input.")
+
     elif choice == "3":
-        print("-------------------------------------------")
+        print("\n-------------------------------------------")
         print("MANUAL JOG MODE")
-        print("Nudge your motors safely by small measurements.")
-        print("Type an Axis and a Millimeter value (e.g., 'X 10', 'Y -5')")
-        print("  -> X Positive (+): Moves LEFT (towards the X motor)")
-        print("  -> Y Positive (+): Moves DOWN (away from the Y motor)")
-        print("Type 'SERVO' to drop a bean.")
-        print("Type 'ORIGIN' to return the gantry to the safe parking origin.")
-        print("Type 'ZERO' to set the current position as the new absolute (0,0) origin.")
-        print("Type 'POS' to print the current physical coordinates of the machine.")
-        print("Type 'SETTINGS' to see current GRBL hardware config (steps/mm, etc).")
-        print("To change a setting, type it directly (e.g., '$100=80').")
-        print("Type 'q' to quit.")
-        print("-------------------------------------------")
-        
-        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Setting GRBL to RELATIVE positioning mode (G91)...")
-        try:
-            send_gcode("G91") # Set GRBL to RELATIVE positioning mode
-        except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to send G91: {e}")
-            
+        print("Commands:")
+        print("  X-3      move X by -3 units")
+        print("  Y1.5     move Y by 1.5 units")
+        print("  SERVO    trigger bean drop")
+        print("  ORIGIN   return to park position")
+        print("  ZERO     set current position as (0,0)")
+        print("  POS      print current machine position")
+        print("  SETTINGS print GRBL config")
+        print("  Q        quit")
+        print("-------------------------------------------\n")
+
+        send_gcode("G91")  # Relative mode for jogging
+
         while True:
-            cmd = input("Jog Command -> ").strip().upper()
+            cmd = input("Jog -> ").strip().upper()
+
             if cmd == 'Q':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Quitting manual jog mode. Restoring Absolute Mode (G90)...")
-                try:
-                    send_gcode("G90") # Restore GRBL back to Absolute Mode
-                except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to send G90: {e}")
+                send_gcode("G90")
                 break
+
             elif cmd == 'SERVO':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Initiating SERVO drop sequence...")
-                try:
-                    send_gcode("M3 S90")
-                    time.sleep(0.5)
-                    send_gcode("M3 S0")
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] SERVO sequence complete.")
-                except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Servo drop failed: {e}")
+                send_gcode("M3 S90")
+                time.sleep(0.5)
+                send_gcode("M3 S0")
+
             elif cmd == 'ORIGIN':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Testing parking to safe origin (X:{ORIGIN_X}, Y:{ORIGIN_Y})...")
-                try:
-                    send_gcode("G90") # Switch temporarily to Absolute Mode
-                    send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}") # Move Y safely
-                    send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}") # Move X safely
-                    send_gcode("G91") # Switch back to Relative positioning for jogging
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Origin sequence complete.")
-                except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Origin sequence failed: {e}")
+                send_gcode("G90")
+                send_gcode(f"G1 Y{ORIGIN_Y} F{SPEED_Y}")
+                send_gcode(f"G1 X{ORIGIN_X} F{SPEED_X}")
+                send_gcode("G91")
+
             elif cmd == 'ZERO':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Zeroing machine coordinates (G10 L20 P1 X0 Y0 Z0)...")
-                try:
-                    send_gcode("G10 L20 P1 X0 Y0 Z0")
-                    print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Current position successfully saved to EEPROM as the absolute (0,0) origin.")
-                except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to zero coordinates: {e}")
+                send_gcode("G10 L20 P1 X0 Y0 Z0")
+                print("✅ Current position saved as (0, 0).")
+
             elif cmd == 'POS':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Requesting machine position...")
-                if grbl is None:
-                    print("--> SIMULATED: At X:0.0 Y:0.0")
-                else:
-                    try:
-                        grbl.write(b"?")
-                        time.sleep(0.1)
-                        while grbl.in_waiting > 0:
-                            line = grbl.readline().decode('utf-8').strip()
-                            if line:
-                                print(f"[{time.strftime('%H:%M:%S')}] [POSITION] {line}")
-                    except Exception as e:
-                        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to get position: {e}")
-            elif cmd == 'SETTINGS':
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Requesting GRBL settings ($$)...")
-                if grbl is None:
-                    print("--> SIMULATED: $100=250.000, $101=250.000, etc.")
-                else:
-                    try:
-                        grbl.write(b"$$\n")
-                        time.sleep(0.5)
-                        while grbl.in_waiting > 0:
-                            line = grbl.readline().decode('utf-8').strip()
-                            if line:
-                                print(f"[GRBL CONFIG] {line}")
-                    except Exception as e:
-                        print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to get settings: {e}")
-            elif cmd.startswith('$'):
-                print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Sending RAW config command: {cmd}")
                 if grbl:
-                    send_gcode(cmd)
+                    grbl.write(b"?")
+                    time.sleep(0.15)
+                    while grbl.in_waiting > 0:
+                        line = grbl.readline().decode('utf-8').strip()
+                        if line:
+                            print(f"[POS] {line}")
                 else:
-                    print("--> SIMULATED: Config command accepted.")
+                    print("SIMULATED: X:0.0 Y:0.0")
+
+            elif cmd == 'SETTINGS':
+                if grbl:
+                    grbl.write(b"$$\n")
+                    time.sleep(0.5)
+                    while grbl.in_waiting > 0:
+                        line = grbl.readline().decode('utf-8').strip()
+                        if line:
+                            print(f"[CFG] {line}")
+                else:
+                    print("SIMULATED settings.")
+
+            elif cmd.startswith('$'):
+                send_gcode(cmd)
+
             elif cmd:
                 try:
                     cmd_clean = cmd.replace(" ", "")
                     axis = cmd_clean[0]
-                    val = float(cmd_clean[1:])
+                    val  = float(cmd_clean[1:])
                     if axis in ['X', 'Y', 'Z']:
-                        feed_rate = SPEED_Y if axis == 'Y' else SPEED_X
-                        gcode_cmd = f"G1 {axis}{val} F{feed_rate}"
-                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Preparing to move {axis}-Axis by {val}mm...")
-                        print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Sending command: {gcode_cmd}")
-                        try:
-                            send_gcode(gcode_cmd)
-                            print(f"[{time.strftime('%H:%M:%S')}] [DEBUG] Post-move check complete for {gcode_cmd}.")
-                        except Exception as e:
-                            print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Failed to execute move command {gcode_cmd}: {e}")
+                        feed = SPEED_Y if axis == 'Y' else SPEED_X
+                        send_gcode(f"G1 {axis}{val} F{feed}")
                     else:
-                        print(f"[{time.strftime('%H:%M:%S')}] [WARNING] Unrecognized axis '{axis}'. Please start with X, Y, or Z.")
+                        print(f"Unknown axis '{axis}'. Use X, Y, or Z.")
                 except Exception as e:
-                    print(f"[{time.strftime('%H:%M:%S')}] [ERROR] Exception parsing input '{cmd}': {e}")
-                    print("Invalid input! Try something like: X 10 or X -10")
+                    print(f"Bad command '{cmd}': {e}")

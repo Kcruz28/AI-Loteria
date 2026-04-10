@@ -103,8 +103,8 @@ def testing_middle_dot():
     # USB Camera #1 is always 0.
     # USB Camera #2 is always 2. (Index 1 is taken by Camera #1's metadata/audio).
     # -------------------------------------------------------------
-    cap0 = cv2.VideoCapture(0)
-    cap1 = cv2.VideoCapture(2)
+    cap0 = cv2.VideoCapture(8)
+    cap1 = cv2.VideoCapture(10)
 
     print(f"Camera 1 (Index 0) open: {cap0.isOpened()}")
     print(f"Camera 2 (Index 2) open: {cap1.isOpened()}")

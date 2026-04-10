@@ -272,9 +272,12 @@ def drop_bean(pixel_x, pixel_y):
     
     # Check boundaries using the new constraints
     if target_x < MIN_X or target_x > MAX_X or target_y < MIN_Y or target_y > MAX_Y:
-         print(f"WARNING: Coordinate ({target_x}, {target_y}) is out of bounds.")
-         print(f"-> Allowed ranges: X ({MIN_X} to {MAX_X}), Y ({MIN_Y} to {MAX_Y})")
-         print("-> Move aborted to prevent crashing!")
+         print("\n" + "!"*40)
+         print(f"🛑 🛑 MOVE BLOCKED: OUT OF BOUNDS! 🛑 🛑")
+         print(f"Computed Coordinate ({target_x}, {target_y}) is beyond limits.")
+         print(f"Allowed X: [{MIN_X} to {MAX_X}], Allowed Y: [{MIN_Y} to {MAX_Y}]")
+         print("-> Move aborted to prevent hardware crash!")
+         print("!"*40 + "\n")
          return  # <--- ENABLED bounds enforcement to prevent moving out of bounds
 
     # 3. Move the CNC (Sequentially)
@@ -284,6 +287,11 @@ def drop_bean(pixel_x, pixel_y):
     send_gcode("G90") # Ensure Absolute Mode before executing coordinates
     send_gcode(f"G1 X{target_x} F{SPEED_X}") # Move X axis first
     send_gcode(f"G1 Y{target_y} F{SPEED_Y}") # Then move Y axis slower
+    
+    # Wait 2 seconds at the target location before dropping the bean!
+    print(f"[CNC] ⏳ Waiting 2 seconds at location before dropping...")
+    send_gcode("G4 P2.0") # GRBL Dwell command - forces the machine to wait
+    time.sleep(2)         # Python pause to keep the queue in sync
     
     # 4. Activate Servo (Using M3 Spindle command in GRBL)
     print(f"[CNC] 👇 DROPPING BEAN AT ({target_x}, {target_y})...")

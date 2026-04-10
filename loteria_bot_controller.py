@@ -11,46 +11,54 @@ import loteria_bot_controller
 # ==========================================
 TEST_MODE_SINGLE_CAMERA = False
 
-class_color = {}
 camera_class_ids = {}
 tablas = [
     "tabla 1", "tabla 2", "tabla 3", "tabla 4", "tabla 5",
     "tabla 6", "tabla 7", "tabla 8", "tabla 9", "tabla 10",
 ]
 
-green_cards = set()       # Cards fully handled (bean dropped)
-queued_cards = set()      # Cards currently waiting in the drop queue
-drop_queue = queue.Queue()  # Thread-safe queue of (cls, x_mid, y_mid)
+green_cards = set()     # Cards fully handled (bean dropped)
+queued_cards = set()    # Cards waiting in the drop queue
+drop_queue = queue.Queue()
 queue_lock = threading.Lock()
 
 
 # ==============================================================================
-# DROP WORKER — runs in its own thread, processes one drop at a time
+# LOGGING HELPER
+# ==============================================================================
+def log(tag, msg):
+    ts = time.strftime('%H:%M:%S')
+    print(f"[{ts}] [{tag}] {msg}")
+
+
+# ==============================================================================
+# DROP WORKER — one thread, one drop at a time
 # ==============================================================================
 def drop_worker():
+    log("WORKER", "Drop worker ready and waiting for matches...")
     while True:
-        cls, x_mid, y_mid = drop_queue.get()  # Blocks until something is in the queue
+        cls, x_mid, y_mid = drop_queue.get()
 
-        print(f"\n=======================================================")
-        print(f"🟢 DROP WORKER: Handling class {cls} at ({x_mid}, {y_mid})")
-        print(f"=======================================================\n")
+        log("WORKER", f"▶ Starting drop for class {cls} at pixel ({x_mid}, {y_mid})")
 
         try:
+            # Call drop_bean directly — it handles its own serial + robot_lock internally
             loteria_bot_controller.drop_bean(x_mid, y_mid)
+            log("WORKER", f"✅ Drop complete for class {cls}. Robot parked.")
         except Exception as e:
-            print(f"[DROP WORKER] Error during drop: {e}")
+            log("WORKER", f"❌ Drop FAILED for class {cls}: {e}")
 
-        # Mark as fully done after the robot physically returns
         with queue_lock:
             green_cards.add(cls)
             queued_cards.discard(cls)
 
-        print(f"[DROP WORKER] ✅ Class {cls} complete. Ready for next card.")
+        remaining = drop_queue.qsize()
+        log("WORKER", f"Cards done: {len(green_cards)} | Remaining in queue: {remaining}")
         drop_queue.task_done()
 
 
 # ==============================================================================
-# VISION — draw dots and queue new matches
+# VISION — classify detections and queue new matches
 # ==============================================================================
 def coordinate_objects(results, frame, shared_classes=None):
     detected_classes = set()
@@ -69,36 +77,39 @@ def coordinate_objects(results, frame, shared_classes=None):
 
                 if cls not in tablas:
                     with queue_lock:
-                        already_done = cls in green_cards
-                        already_queued = cls in queued_cards
-                        is_match = (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA
+                        already_done    = cls in green_cards
+                        already_queued  = cls in queued_cards
+                        is_match        = (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA
 
                     if already_done:
-                        color = (0, 255, 0)  # Green — already handled
+                        color = (0, 255, 0)     # Green  — bean already dropped
+
                     elif already_queued:
-                        color = (0, 255, 255)  # Yellow — in queue, robot on its way
+                        color = (0, 255, 255)   # Yellow — queued, robot en route
+
                     elif is_match:
-                        color = (0, 165, 255)  # Orange — just matched, queuing now
+                        color = (0, 165, 255)   # Orange — new match, queuing now
                         with queue_lock:
                             queued_cards.add(cls)
                         drop_queue.put((cls, x_mid, y_mid))
-                        print(f"[VISION] Queued class {cls} at ({x_mid}, {y_mid}). Queue size: {drop_queue.qsize()}")
+                        log("VISION", f"🎯 MATCH! Class {cls} queued at ({x_mid}, {y_mid}) — queue size: {drop_queue.qsize()}")
+
                     else:
-                        color = (0, 0, 255)  # Red — seen by only one camera
+                        color = (0, 0, 255)     # Red    — only one camera sees it
 
                     cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
                     cv2.putText(
                         frame,
-                        f"({x_mid},{y_mid})",
+                        f"cls:{cls} ({x_mid},{y_mid})",
                         (x_mid + 10, y_mid),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        0.5,
+                        0.45,
                         color,
-                        2,
+                        1,
                     )
 
     if len(green_cards) >= total_cards:
-        cv2.putText(frame, "LOTERIA", (100, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
+        cv2.putText(frame, "LOTERIA!", (80, 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 255, 0), 5)
 
     return detected_classes
 
@@ -112,21 +123,22 @@ def testing_middle_dot():
         else "mps" if torch.backends.mps.is_available()
         else "cpu"
     )
-    print(f"Using device: {device}")
+    log("SETUP", f"Using device: {device}")
 
-    model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt")
+    # verbose=False suppresses YOLO's own per-frame console output
+    model = YOLO("runs/detect/runs/detect/loteria_yolo/weights/best.pt", verbose=False)
     model.to(device)
+    log("SETUP", "YOLO model loaded.")
 
-    # Start the drop worker thread (one at a time, sequential drops)
-    worker_thread = threading.Thread(target=drop_worker, daemon=True)
-    worker_thread.start()
-    print("[SETUP] Drop worker thread started.")
+    # Start drop worker
+    threading.Thread(target=drop_worker, daemon=True).start()
+    log("SETUP", "Drop worker thread started.")
 
+    # Open cameras
     cap0 = cv2.VideoCapture(8)
     cap1 = cv2.VideoCapture(10)
-
-    print(f"Camera 1 (Index 8) open: {cap0.isOpened()}")
-    print(f"Camera 2 (Index 10) open: {cap1.isOpened()}")
+    log("SETUP", f"Camera 8  open: {cap0.isOpened()}")
+    log("SETUP", f"Camera 10 open: {cap1.isOpened()}")
 
     for cap in [cap0, cap1]:
         if cap.isOpened():
@@ -134,25 +146,25 @@ def testing_middle_dot():
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             cap.set(cv2.CAP_PROP_FPS, 10)
 
-    frames = {}
+    frames      = {}
     frames_lock = threading.Lock()
-    running = True
+    running     = True
     skip_frames = 2
 
+    # ------------------------------------------------------------------
     def capture_process(cap, camera_id):
         nonlocal running
-        frame_count = 0
+        frame_count          = 0
         consecutive_failures = 0
-        MAX_FAILURES = 10
+        MAX_FAILURES         = 10
 
         while running and cap.isOpened():
             ret, frame = cap.read()
 
             if not ret:
                 consecutive_failures += 1
-                print(f"Camera {camera_id}: Read failed ({consecutive_failures}/{MAX_FAILURES})")
                 if consecutive_failures >= MAX_FAILURES:
-                    print(f"Lost connection to Camera {camera_id}")
+                    log("CAM", f"❌ Camera {camera_id} lost after {MAX_FAILURES} failures. Stopping.")
                     break
                 time.sleep(0.1)
                 continue
@@ -164,33 +176,36 @@ def testing_middle_dot():
                 continue
 
             try:
-                results = model(frame, conf=0.50, imgsz=320)
+                # verbose=False suppresses per-inference prints
+                results = model(frame, conf=0.50, imgsz=320, verbose=False)
                 annotated_frame = results[0].plot()
 
-                other_camera_id = 1 - camera_id
+                other_id = 1 - camera_id
                 with frames_lock:
-                    shared_classes = camera_class_ids.get(other_camera_id, set())
+                    shared_classes = camera_class_ids.get(other_id, set())
 
                 detected_classes = coordinate_objects(results, annotated_frame, shared_classes)
 
                 with frames_lock:
-                    frames[camera_id] = annotated_frame.copy()
+                    frames[camera_id]           = annotated_frame.copy()
                     camera_class_ids[camera_id] = detected_classes
 
             except Exception as e:
-                print(f"Error processing frame from camera {camera_id}: {e}")
+                log("CAM", f"Camera {camera_id} processing error: {e}")
 
             time.sleep(0.001)
+    # ------------------------------------------------------------------
 
     threads = []
     if cap0.isOpened():
-        threads.append(threading.Thread(target=capture_process, args=(cap0, 0)))
+        threads.append(threading.Thread(target=capture_process, args=(cap0, 0), daemon=True))
     if cap1.isOpened():
-        threads.append(threading.Thread(target=capture_process, args=(cap1, 1)))
+        threads.append(threading.Thread(target=capture_process, args=(cap1, 1), daemon=True))
 
     for t in threads:
-        t.daemon = True
         t.start()
+
+    log("SETUP", "Camera threads started. Press 'r' to reset, 'q' to quit.")
 
     try:
         last_frames = {}
@@ -198,24 +213,26 @@ def testing_middle_dot():
         while running:
             with frames_lock:
                 frames_to_show = frames.copy()
-                for k in list(frames_to_show.keys()):
+                for k in list(frames_to_show):
                     frames.pop(k, None)
 
-            for camera_id, frame in frames_to_show.items():
-                last_frames[camera_id] = frame
+            last_frames.update(frames_to_show)
 
             for camera_id, frame in last_frames.items():
-                # Show queue status on screen
-                status = f"Done:{len(green_cards)} | Queued:{drop_queue.qsize()}"
+                with queue_lock:
+                    done   = len(green_cards)
+                    queued = drop_queue.qsize()
+
+                status = f"Done: {done}/16 | Queued: {queued}"
                 cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 cv2.imshow(f"Camera {camera_id}", frame)
 
             key = cv2.waitKey(10) & 0xFF
+
             if key == ord("r"):
                 with queue_lock:
                     green_cards.clear()
                     queued_cards.clear()
-                # Drain the queue
                 while not drop_queue.empty():
                     try:
                         drop_queue.get_nowait()
@@ -224,10 +241,11 @@ def testing_middle_dot():
                         break
                 with frames_lock:
                     camera_class_ids.clear()
-                print("GAME RESET - All cards cleared")
+                log("RESET", "♻️  Game reset — all cards cleared.")
+
             elif key == ord("q"):
                 running = False
-                print("Quitting...")
+                log("MAIN", "Quit requested.")
                 break
 
             if device.type == "cuda":
@@ -235,10 +253,10 @@ def testing_middle_dot():
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        print("Interrupted by user")
+        log("MAIN", "Keyboard interrupt received.")
     finally:
         running = False
-        print("Cleaning up...")
+        log("MAIN", "Shutting down...")
 
         if hasattr(loteria_bot_controller, 'emergency_stop'):
             loteria_bot_controller.emergency_stop()
@@ -246,15 +264,14 @@ def testing_middle_dot():
         for t in threads:
             t.join(timeout=1.0)
 
-        if cap0.isOpened():
-            cap0.release()
-        if cap1.isOpened():
-            cap1.release()
+        cap0.release()
+        cap1.release()
         cv2.destroyAllWindows()
 
         if device.type == "cuda":
             torch.cuda.empty_cache()
-        print("Cleanup complete")
+
+        log("MAIN", "Cleanup complete.")
 
 
 if __name__ == "__main__":

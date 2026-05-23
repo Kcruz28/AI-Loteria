@@ -4,6 +4,14 @@ import time
 import os
 import torch
 import threading
+import loteria_bot_controller
+
+# ==========================================
+# CONFIGURATION
+# ==========================================
+# Set this to True if you only have 1 camera connected and want to test the CNC movement.
+# When True, it will drop a bean on ANY card it detects immediately.
+TEST_MODE_SINGLE_CAMERA = True
 
 
 class_color = {}
@@ -46,10 +54,19 @@ def coordinate_objects(results, frame, shared_classes=None):
                     color = (0, 0, 255)  # Red
                     if class_color.get(cls) == True:
                         color = (0, 255, 0)  # Green
-                    elif shared_classes and cls in shared_classes:
+                    elif (shared_classes and cls in shared_classes) or TEST_MODE_SINGLE_CAMERA:
                         color = (0, 255, 0)  # Green
-                        class_color[cls] = True  # remenber it was seen by both cameras
+                        class_color[cls] = True  # remenber it was seen by both cameras (or we are testing)
                         green_cards.add(cls)
+                        
+                        print(f"\n=======================================================")
+                        print(f"🟢 BINGO! Class {cls} matched at pixel coords ({x_mid}, {y_mid})!")
+                        print(f"Triggering robot to drop bean...")
+                        print(f"=======================================================\n")
+                        
+                        # Trigger CNC to drop bean at the midpoint of the detected square
+                        # We run this in a separate thread so it doesn't freeze the camera feed
+                        threading.Thread(target=loteria_bot_controller.drop_bean, args=(x_mid, y_mid), daemon=True).start()
 
                 cv2.circle(frame, (x_mid, y_mid), 20, color, -1)
                 cv2.putText(
@@ -62,9 +79,9 @@ def coordinate_objects(results, frame, shared_classes=None):
                     2,
                 )
 
-                print(
-                    f"Camera sees class {cls}, confidence {conf:.2f}, midpoint ({x_mid},{y_mid})"
-                )
+                # To prevent console spam, we won't print every single frame.
+                # Uncomment this if you need to debug raw vision tracking:
+                # print(f"Camera sees class {cls}, confidence {conf:.2f}, midpoint ({x_mid},{y_mid})")
 
     if green_cards == total_cards:
         cv2.putText(
@@ -122,7 +139,7 @@ def testing_middle_dot():
 
             try:
                 confidence = 0.70
-                results = model(frame, conf=confidence)
+                results = model(frame, conf=confidence, imgsz=320)
                 annotated_frame = results[0].plot()
 
                 # grab other camera's classes
@@ -156,7 +173,7 @@ def testing_middle_dot():
         thread.start()
 
     try:
-        last_frames = {}  # saving in case it is slow
+        last_frames = {} 
 
         while running:
             frames_to_show = {}

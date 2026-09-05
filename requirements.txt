@@ -13,3 +13,4 @@ ultralytics
 gradio
 roboflow
 python-dotenv
+pyserial

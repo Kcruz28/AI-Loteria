@@ -57,11 +57,13 @@ python gradio_app.py
 
 ```bash
 source venv/bin/activate
-python app.py
+python loteria_game.py
 ```
 
-- Uses two webcams for real-time card detection and matching.
+- Uses one webcam plus a keyboard "caller" — type a detected class ID and press Enter to mark it matched (green) and trigger a bean drop.
+- Requires `loteria_bot_controller.py`; if no GRBL robot is connected over serial, it automatically falls back to a simulated mode.
 - Press `r` to reset, `q` to quit.
+- Note: The Gradio app (`gradio_app.py`) does not require hardware and works with image uploads instead.
 
 ---
 
@@ -69,11 +71,15 @@ python app.py
 
 ```
 AI Loteria/
-├── app.py            # Classic dual-camera Loteria app
-├── gradio_app.py     # Gradio web interface
-├── requirements.txt  # Python dependencies
-├── best.pt           # YOLO model weights (not included)
-└── README.md         # Project documentation
+├── loteria_game.py              # Classic camera + keyboard-caller Loteria app (with robot integration)
+├── gradio_app.py                # Gradio web interface (no hardware required)
+├── loteria_bot_controller.py    # Robot/CNC control module (serial-based)
+├── requirements.txt             # Python dependencies
+├── best.pt                      # YOLO model weights (not included)
+├── archive/                     # Archived versions (older iterations)
+│   ├── app.py
+│   └── app2.py
+└── README.md                    # Project documentation
 ```
 
 ---
@@ -81,7 +87,7 @@ AI Loteria/
 ## ⚙️ Configuration
 
 - **Model:** Place your trained YOLO `best.pt` file in the project root.
-- **Cameras:** The classic app uses camera 0 and 1 by default. Adjust in `app.py` if needed.
+- **Cameras:** The classic app (`loteria_game.py`) uses camera 0 by default. Adjust in `loteria_game.py` if needed.
 - **Detection Threshold:** Adjustable in the Gradio UI.
 
 ---
